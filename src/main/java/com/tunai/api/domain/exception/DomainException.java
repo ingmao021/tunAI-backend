@@ -1,0 +1,31 @@
+package com.tunai.api.domain.exception;
+
+import java.time.Duration;
+import java.util.Optional;
+
+/**
+ * Base de los errores de negocio. Cada subclase corresponde a un código del catálogo (§15.4); la traducción a HTTP la
+ * hace el adaptador web.
+ */
+public abstract class DomainException extends RuntimeException {
+
+    private final Duration retryAfter;
+
+    protected DomainException(String message) {
+        this(message, null, null);
+    }
+
+    protected DomainException(String message, Duration retryAfter) {
+        this(message, retryAfter, null);
+    }
+
+    protected DomainException(String message, Duration retryAfter, Throwable cause) {
+        super(message, cause);
+        this.retryAfter = retryAfter;
+    }
+
+    /** Tiempo sugerido antes de reintentar, para el header {@code Retry-After} (RF-BE-015). */
+    public Optional<Duration> retryAfter() {
+        return Optional.ofNullable(retryAfter);
+    }
+}

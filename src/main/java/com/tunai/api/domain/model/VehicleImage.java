@@ -3,8 +3,8 @@ package com.tunai.api.domain.model;
 import java.util.Objects;
 
 /**
- * Foto del vehículo ya leída en memoria. Las reglas de RN-04 (firma de bytes, tamaño y lado mínimo) se aplican en la
- * Fase 2; aquí solo se garantizan las invariantes estructurales.
+ * Foto del vehículo ya leída en memoria. Las reglas de RN-04 (firma de bytes, tamaño y lado mínimo) las aplica
+ * {@link ImagePolicy} antes de construirla; aquí solo se garantizan las invariantes estructurales.
  */
 public final class VehicleImage {
 
