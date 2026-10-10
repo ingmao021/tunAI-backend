@@ -29,6 +29,7 @@
     <properties>
         <java.version>21</java.version>
         <archunit.version>1.4.1</archunit.version>
+        <wiremock.version>3.13.1</wiremock.version>
         <jacoco.version>0.8.13</jacoco.version>
         <spotless.version>2.44.4</spotless.version>
         <!-- RNF-BE-014: cobertura mínima de líneas en domain y application -->
@@ -62,6 +63,13 @@
             <groupId>com.tngtech.archunit</groupId>
             <artifactId>archunit-junit5</artifactId>
             <version>${archunit.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Anexo C: el adaptador de Stability se prueba solo contra WireMock (RN-15) -->
+        <dependency>
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock-standalone</artifactId>
+            <version>${wiremock.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
