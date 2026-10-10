@@ -619,7 +619,7 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 1. La API de SF3D quita el fondo de fotos de carros sin preprocesamiento.
 2. Las generaciones fallidas no se cobran (**PENDIENTE DE VALIDAR**).
 3. La latencia de SF3D vía API es de pocos segundos, muy por debajo de 60 s.
-4. Render va detrás de Cloudflare, que entrega la IP real del cliente en `CF-Connecting-IP`; `X-Forwarded-For` acumula valores de varios proxies y el primero lo controla el cliente (**PENDIENTE DE VALIDAR** en el servicio desplegado).
+4. Render va detrás de Cloudflare, que entrega la IP real del cliente en `CF-Connecting-IP`. **Validado el 2026-10-09** en el servicio desplegado: un `X-Forwarded-For` falsificado se ignora y se registra la IP real; Cloudflare rechaza con 403 (error 1000) cualquier petición que traiga su propio `CF-Connecting-IP`, así que el cliente no puede falsificarlo.
 5. 512 MB de RAM bastan con concurrencia 2 y entradas de hasta 10 MB.
 6. La cuenta nueva de Stability sigue recibiendo 25 créditos gratuitos y el precio de SF3D sigue en 10 créditos (**PENDIENTE DE VALIDAR** al crear la cuenta).
 
