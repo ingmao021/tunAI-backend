@@ -48,6 +48,9 @@ tunai:
     per-ip: ${TUNAI_QUOTA_PER_IP:2}
     global-daily: ${TUNAI_QUOTA_GLOBAL_DAILY:2}
     timezone: ${TUNAI_QUOTA_TIMEZONE:America/Bogota}
+  # RNF-BE-012: métricas tunai.* en el log, solo si hubo actividad en el intervalo
+  metrics:
+    log-interval: ${TUNAI_METRICS_LOG_INTERVAL:5m}
   # RF-BE-022: Render va detrás de Cloudflare, que fija CF-Connecting-IP
   client-ip:
     trusted-header: ${TUNAI_CLIENT_IP_HEADER:CF-Connecting-IP}

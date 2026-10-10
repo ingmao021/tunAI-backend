@@ -3,6 +3,7 @@ package com.tunai.api.adapter.in.web;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.tunai.api.TestImages;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import org.junit.jupiter.api.Test;
@@ -14,8 +15,8 @@ import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
 
 /**
- * F-BE-01 de extremo a extremo con el proveedor {@code fake} (flujos A1 y A2). Los límites se suben para que la cuota no
- * interfiera; la cuota se prueba en {@link QuotaApiTest}.
+ * F-BE-01 de extremo a extremo con el proveedor {@code fake} (flujos A1 y A2). Los límites se suben para que la cuota
+ * no interfiera; la cuota se prueba en {@link QuotaApiTest}.
  */
 @SpringBootTest(
         properties = {
@@ -32,6 +33,29 @@ class GenerationApiTest {
 
     @Autowired
     MockMvcTester mvc;
+
+    @Autowired
+    MeterRegistry meterRegistry;
+
+    /**
+     * El registro publica por intervalos ({@code count()} devuelve el intervalo anterior), así que aquí se verifica que
+     * los medidores existan con sus etiquetas; el conteo exacto lo prueba {@code MeteredModelGeneratorTest}.
+     */
+    @Test
+    void eachGenerationIsMeasured() {
+        generate(INSTALLATION_ID, TestImages.jpeg(800, 600));
+
+        assertThat(meterRegistry
+                        .find("tunai.generations")
+                        .tags("provider", "fake", "result", "success")
+                        .counter())
+                .isNotNull();
+        assertThat(meterRegistry
+                        .find("tunai.provider.latency")
+                        .tags("provider", "fake", "result", "success")
+                        .timer())
+                .isNotNull();
+    }
 
     @Test
     void returnsTheGlbForAValidPhoto() {

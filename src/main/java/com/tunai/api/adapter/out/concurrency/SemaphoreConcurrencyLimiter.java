@@ -6,7 +6,10 @@ import java.time.Duration;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Limita las generaciones simultáneas con un semáforo, sin esperar: si no hay cupo responde {@code 503 SERVICE_BUSY}. */
+/**
+ * Limita las generaciones simultáneas con un semáforo, sin esperar: si no hay cupo responde
+ * {@code 503 SERVICE_BUSY}.
+ */
 public final class SemaphoreConcurrencyLimiter implements ConcurrencyLimiterPort {
 
     /** {@code Retry-After} de {@code SERVICE_BUSY} (RF-BE-015). */

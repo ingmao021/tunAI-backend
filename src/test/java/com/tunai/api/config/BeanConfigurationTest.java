@@ -2,6 +2,8 @@ package com.tunai.api.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.MultipartConfigElement;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -9,7 +11,8 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 class BeanConfigurationTest {
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
-            .withUserConfiguration(GeneratorConfiguration.class, ClockConfiguration.class, BeanConfiguration.class);
+            .withUserConfiguration(GeneratorConfiguration.class, ClockConfiguration.class, BeanConfiguration.class)
+            .withBean(MeterRegistry.class, SimpleMeterRegistry::new);
 
     @Test
     void multipartLimitsDeriveFromTheImageLimit() {

@@ -4,7 +4,7 @@
 |---|---|
 | Producto | TunAI — visualización y personalización virtual de vehículos en 3D |
 | Componente | API intermediaria de generación 3D (repositorio **backend**) |
-| Versión del documento | 1.5 |
+| Versión del documento | 1.6 |
 | Fecha | 2026-10-09 (v1.0: 2026-10-03) |
 | Autor | Anderson |
 | Estado | Aprobado para MVP (con puntos **PENDIENTE DE DEFINIR / VALIDAR**) |
@@ -27,6 +27,7 @@
 | 1.3 | 2026-10-09 | Catálogo con `BAD_REQUEST`, `NOT_FOUND` y `METHOD_NOT_ALLOWED`; `type` como URN `urn:tunai:problem:*`; base URL de Render definida (P-BE-02); `POST /api/v1/generations` disponible con el proveedor `fake` antes de la cuota |
 | 1.4 | 2026-10-09 | Cuota: la IP real sale de `CF-Connecting-IP` (Render va detrás de Cloudflare; el último valor de `X-Forwarded-For` es un proxy) (RF-BE-022, supuesto 4); los headers de cuota no exponen el límite global (RF-BE-015); la cuota en memoria usa un único lock (§13.6); variables `TUNAI_CLIENT_IP_HEADER` y `TUNAI_TRUSTED_PROXIES` |
 | 1.5 | 2026-10-09 | Adaptador de Stability: contrato verificado (endpoint vigente, campo `vertex_count`), traducción defensiva de errores (403 solo es moderación si el cuerpo lo dice), cliente HTTP/1.1, lectura acotada del GLB; variables de timeouts y `TUNAI_VERTEX_COUNT` |
+| 1.6 | 2026-10-09 | Métricas `tunai.generations` y `tunai.provider.latency` publicadas en el log; Checkstyle en el build |
 
 **Convenciones:** igual que el PRD del frontend.
 - Prioridad MoSCoW (Must, Should, Could, Won't).
@@ -277,9 +278,9 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RNF-BE-009 | Privacidad | No registrar en logs imágenes, ni bytes de modelo, ni la IP completa (se enmascara); el ID de instalación se registra como hash |
 | RNF-BE-010 | Manejo de errores | Todas las excepciones pasan por un único `@RestControllerAdvice`; ningún stack trace llega al cliente |
 | RNF-BE-011 | Recuperación | Un fallo del proveedor libera la cuota y los permisos (`try/finally`); un reinicio del servicio deja el sistema en estado limpio |
-| RNF-BE-012 | Observabilidad | Logs estructurados (JSON) con `traceId`, usando el soporte nativo de Spring Boot (`logging.structured.format.console=ecs`, perfil `prod`); en local, logs legibles. Métricas Micrometer internas: `tunai.generations{result}` y `tunai.provider.latency` |
+| RNF-BE-012 | Observabilidad | Logs estructurados (JSON) con `traceId`, usando el soporte nativo de Spring Boot (`logging.structured.format.console=ecs`, perfil `prod`); en local, logs legibles. Métricas Micrometer internas `tunai.generations{provider, result}` y `tunai.provider.latency{provider, result}` (`result`: success, rejected, timeout, unavailable, error), medidas por un decorador del puerto `ModelGeneratorPort`. Como Actuator solo expone `health`, se publican en el log cada `TUNAI_METRICS_LOG_INTERVAL` (5 min) y solo si hubo actividad; las métricas de la JVM se descartan para ahorrar memoria |
 | RNF-BE-013 | Mantenibilidad | Arquitectura hexagonal verificada con ArchUnit en CI |
-| RNF-BE-014 | Calidad | Spotless, Checkstyle y JaCoCo; cobertura mínima de **70 %** de líneas en los paquetes `domain` y `application`; el CI falla si baja de ese umbral |
+| RNF-BE-014 | Calidad | Spotless (palantir-java-format), Checkstyle (`config/checkstyle/checkstyle.xml`: errores probables, nombres y prácticas prohibidas; el formato lo cubre Spotless) y JaCoCo; cobertura mínima de **70 %** de líneas en los paquetes `domain` y `application`; el CI falla si baja de ese umbral o hay violaciones |
 | RNF-BE-015 | Configuración | Toda la configuración con `@ConfigurationProperties` validada (`@Validated`) al arrancar: si el proveedor es `stability` y falta la clave, o si un límite es inválido, la app no inicia |
 | RNF-BE-016 | Compatibilidad | API versionada en la ruta (`/api/v1`); cambios incompatibles solo en `/api/v2` |
 
@@ -577,8 +578,8 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 
 | Métrica | Fuente |
 |---|---|
-| Generaciones por resultado (éxito, rechazo, error, tiempo agotado) | Contador `tunai.generations{result}` + logs |
-| Latencia del proveedor (p50 / p95) | `tunai.provider.latency` |
+| Generaciones por resultado (éxito, rechazo, error, tiempo agotado, no disponible) | Contador `tunai.generations{provider, result}` en el log |
+| Latencia del proveedor (media y máximo por intervalo) | `tunai.provider.latency{provider, result}` en el log |
 | Tasa de `429` y `503` | Logs |
 | Generaciones reales vs presupuesto (2) | Logs + panel de Stability |
 | Tiempo de arranque en frío observado | Logs de inicio de Render |
@@ -708,6 +709,7 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 | `PORT` | `server.port` | Lo asigna Render | Sí (en Render) |
 | `JAVA_TOOL_OPTIONS` | — | `-XX:MaxRAMPercentage=75` | Recomendado |
 | `SPRING_PROFILES_ACTIVE` | — | — | `prod` en Render (logs JSON) |
+| `TUNAI_METRICS_LOG_INTERVAL` | `tunai.metrics.log-interval` | `5m` | No |
 
 ## Anexo B — Dockerfile de referencia
 ```dockerfile

@@ -3,6 +3,7 @@ package com.tunai.api.config;
 import com.tunai.api.adapter.in.web.ImageRequestMapper;
 import com.tunai.api.adapter.out.concurrency.SemaphoreConcurrencyLimiter;
 import com.tunai.api.adapter.out.imageio.ImageIoDimensionsReader;
+import com.tunai.api.adapter.out.metrics.MeteredModelGenerator;
 import com.tunai.api.adapter.out.quota.InMemoryQuotaStore;
 import com.tunai.api.application.port.in.GenerateModelUseCase;
 import com.tunai.api.application.port.in.GetQuotaUseCase;
@@ -14,6 +15,7 @@ import com.tunai.api.application.service.GetQuotaService;
 import com.tunai.api.domain.model.ImageDimensionsReader;
 import com.tunai.api.domain.model.ImagePolicy;
 import com.tunai.api.domain.model.QuotaLimits;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.MultipartConfigElement;
 import java.time.Clock;
 import org.slf4j.Logger;
@@ -71,11 +73,15 @@ public class BeanConfiguration {
             QuotaStorePort quota,
             ModelGeneratorPort generator,
             GenerationProperties properties,
-            StabilityProperties stability) {
+            StabilityProperties stability,
+            GeneratorProperties generatorProperties,
+            MeterRegistry meterRegistry) {
+        ModelGeneratorPort metered = new MeteredModelGenerator(
+                generator, meterRegistry, generatorProperties.provider().name());
         return new GenerateModelService(
                 concurrency,
                 quota,
-                generator,
+                metered,
                 stability.generationOptions(),
                 properties.maxModelBytes().toBytes());
     }
@@ -110,7 +116,8 @@ public class BeanConfiguration {
                 provider);
         if (provider == GeneratorProperties.Provider.STABILITY && limits.globalDaily() > REAL_BUDGET_GENERATIONS) {
             log.warn(
-                    "Proveedor stability con límite global {} > {}: se pueden gastar más créditos de los presupuestados."
+                    "Proveedor stability con límite global {} > {}: se pueden gastar más créditos de los"
+                            + " presupuestados."
                             + " Revisa TUNAI_QUOTA_GLOBAL_DAILY (Anexo E)",
                     limits.globalDaily(),
                     REAL_BUDGET_GENERATIONS);

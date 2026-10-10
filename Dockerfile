@@ -8,7 +8,8 @@ COPY mvnw pom.xml ./
 RUN chmod +x mvnw && ./mvnw -B -q dependency:go-offline
 
 COPY src/ src/
-RUN ./mvnw -B -q package -DskipTests -Dspotless.check.skip=true -Djacoco.skip=true
+# Tests, Spotless, Checkstyle y JaCoCo corren en CI; aquí solo se empaqueta
+RUN ./mvnw -B -q package -DskipTests -Dspotless.check.skip=true -Dcheckstyle.skip=true -Djacoco.skip=true
 
 FROM eclipse-temurin:21-jre
 WORKDIR /app

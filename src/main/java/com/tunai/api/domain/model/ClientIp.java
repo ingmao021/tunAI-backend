@@ -6,7 +6,10 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
-/** IP del cliente, normalizada, para el límite por IP (RN-10). En los logs solo se usa {@link #masked()} (RNF-BE-009). */
+/**
+ * IP del cliente, normalizada, para el límite por IP (RN-10). En los logs solo se usa {@link #masked()}
+ * (RNF-BE-009).
+ */
 public record ClientIp(String value) {
 
     private static final Pattern IPV4 = Pattern.compile("(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})");
@@ -20,8 +23,8 @@ public record ClientIp(String value) {
     }
 
     /**
-     * Normaliza un valor tomado de un header: quita espacios, corchetes de IPv6 y pasa a minúsculas. No resuelve nombres
-     * DNS.
+     * Normaliza un valor tomado de un header: quita espacios, corchetes de IPv6 y pasa a minúsculas. No resuelve
+     * nombres DNS.
      *
      * @return vacío si el valor no es una IP literal válida
      */
