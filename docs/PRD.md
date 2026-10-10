@@ -4,7 +4,7 @@
 |---|---|
 | Producto | TunAI — visualización y personalización virtual de vehículos en 3D |
 | Componente | API intermediaria de generación 3D (repositorio **backend**) |
-| Versión del documento | 1.3 |
+| Versión del documento | 1.4 |
 | Fecha | 2026-10-09 (v1.0: 2026-10-03) |
 | Autor | Anderson |
 | Estado | Aprobado para MVP (con puntos **PENDIENTE DE DEFINIR / VALIDAR**) |
@@ -24,7 +24,8 @@
 | 1.0 | 2026-10-03 | Versión inicial |
 | 1.1 | 2026-10-09 | Stack alineado con el repositorio: Maven y Spring Boot 4.1.x (antes Gradle y 3.x). Presupuesto limitado a los créditos gratuitos (2 generaciones): límites por IP y global en 2; nuevo adaptador `fake` para desarrollo (RF-BE-021); sin llamadas reales durante el desarrollo (RN-15); se elimina el prototipo de la Fase 0; manejo de la clave (§18); riesgos R-BE-10 a R-BE-12; verificación de vehículo en el cliente (RN-16) |
 | 1.2 | 2026-10-09 | Revisión de huecos: IP real desde `X-Forwarded-For` (RF-BE-022); multipart solo en memoria (RF-BE-018); 415 vs 400 y 413 de Spring (§15.4); headers de cuota en 429 por IP y `Retry-After` definidos (RF-BE-015); tamaño máximo del GLB; `traceId` (RF-BE-023); liberación de la reserva ante cualquier fallo (§13.5); cuota en modo `fake` (§13.8); logs JSON nativos de Spring Boot; checklist de ensayo y demo (Anexo E); referencias obsoletas a "créditos comprados" y al prototipo corregidas |
-| 1.3 | 2026-10-09 | Fase 2: catálogo con `BAD_REQUEST`, `NOT_FOUND` y `METHOD_NOT_ALLOWED`; `type` como URN `urn:tunai:problem:*`; base URL de Render definida (P-BE-02); `POST /api/v1/generations` disponible con el proveedor `fake` antes de la cuota |
+| 1.3 | 2026-10-09 | Catálogo con `BAD_REQUEST`, `NOT_FOUND` y `METHOD_NOT_ALLOWED`; `type` como URN `urn:tunai:problem:*`; base URL de Render definida (P-BE-02); `POST /api/v1/generations` disponible con el proveedor `fake` antes de la cuota |
+| 1.4 | 2026-10-09 | Cuota: la IP real sale de `CF-Connecting-IP` (Render va detrás de Cloudflare; el último valor de `X-Forwarded-For` es un proxy) (RF-BE-022, supuesto 4); los headers de cuota no exponen el límite global (RF-BE-015); la cuota en memoria usa un único lock (§13.6); variables `TUNAI_CLIENT_IP_HEADER` y `TUNAI_TRUSTED_PROXIES` |
 
 **Convenciones:** igual que el PRD del frontend.
 - Prioridad MoSCoW (Must, Should, Could, Won't).
@@ -108,6 +109,8 @@ Sin backend, la clave de Stability tendría que ir dentro de la app y cualquiera
 - SF3D — paper: https://arxiv.org/abs/2408.00653
 - SF3D — repositorio: https://github.com/Stability-AI/stable-fast-3d.git
 - Render — Deploy for Free: https://render.com/docs/free
+- Render — X-Forwarded-For no se limpia, solo se agrega: https://feedback.render.com/features/p/send-the-correct-xforwardedfor
+- Render — proxies delante de la app: https://community.render.com/t/what-number-of-proxies-sit-in-front-of-an-express-app-deployed-on-render/35981
 - RFC 9457 (Problem Details): https://www.rfc-editor.org/rfc/rfc9457
 
 ---
@@ -244,14 +247,14 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RF-BE-012 | Llamar a SF3D con `texture_resolution`, `foreground_ratio` y `remesh` configurables (por defecto `1024`, `0.85`, `none`) | Must |
 | RF-BE-013 | Verificar que la respuesta del proveedor empiece con el magic de GLB (`glTF`) y no exceda un tamaño máximo configurable (por defecto 20 MB, `tunai.generation.max-model-bytes`). Aplica también al adaptador `fake` | Must |
 | RF-BE-014 | Traducir los errores del proveedor a los códigos propios (sección 15.4) | Must |
-| RF-BE-015 | Devolver los headers `X-Quota-Limit`, `X-Quota-Remaining` y `X-Quota-Reset` en respuestas de generación y cuota, y `Retry-After` en `429` y `503`. Los headers `X-Quota-*` reflejan **el límite más restrictivo** que aplica a la petición (instalación, IP o global), para que un `429` nunca llegue con `remaining > 0`. `X-Quota-Reset` va en ISO-8601 UTC. `Retry-After` va en segundos: hasta las 00:00 de la zona configurada en `429` y en `503` por límite global; 5 s en `503 SERVICE_BUSY` | Must |
+| RF-BE-015 | Devolver los headers `X-Quota-Limit`, `X-Quota-Remaining` y `X-Quota-Reset` en respuestas de generación y cuota, y `Retry-After` en `429` y `503`. Los headers `X-Quota-*` reflejan **el límite más restrictivo entre instalación e IP**, para que un `429` nunca llegue con `remaining > 0`; el límite global **no** se expone, para no revelar el presupuesto (A5). `X-Quota-Reset` va en ISO-8601 UTC. `Retry-After` va en segundos: hasta las 00:00 de la zona configurada en `429` y en `503` por límite global; 5 s en `503 SERVICE_BUSY` | Must |
 | RF-BE-016 | Responder todos los errores como `application/problem+json` (RFC 9457) con las propiedades `code` y `traceId` | Must |
 | RF-BE-017 | Calcular el reinicio diario de la cuota a las 00:00 de la zona horaria configurada (por defecto `America/Bogota`) | Must |
 | RF-BE-018 | No escribir imágenes ni modelos en disco; procesarlos solo en memoria. Por defecto Tomcat guarda los archivos multipart en disco temporal: se configura `spring.servlet.multipart.file-size-threshold` igual a `max-file-size` para que queden en memoria (cuenta contra RNF-BE-003) | Must |
 | RF-BE-019 | Documentar la API con OpenAPI (springdoc), habilitado solo en el perfil `dev` | Should |
 | RF-BE-020 | Antes de generar, consultar el saldo de créditos de Stability y responder `503` si es insuficiente (endpoint de saldo **PENDIENTE DE VALIDAR**) | Could |
 | RF-BE-021 | Proveer un adaptador `fake` de `ModelGeneratorPort` que devuelva un GLB de ejemplo sin llamar a ningún proveedor. El adaptador se elige con `tunai.generator.provider` (`fake` \| `stability`); el valor por defecto es `fake`, de modo que una llamada real solo ocurre si se configura `stability` de forma explícita | Must |
-| RF-BE-022 | Obtener la IP del cliente del **último** valor de `X-Forwarded-For` (el que agrega el proxy de Render), nunca del primero, que el cliente puede falsificar. Si el header no existe, usar la IP de la conexión | Must |
+| RF-BE-022 | Obtener la IP real del cliente, en este orden: (1) el header de confianza del proxy de borde (`CF-Connecting-IP`: Render va detrás de Cloudflare, que lo sobrescribe); (2) el valor de `X-Forwarded-For` que agregó el primero de N proxies de confianza contando desde la derecha (N configurable, por defecto 1), **nunca** el primero de la lista, que lo controla el cliente; (3) la IP de la conexión | Must |
 | RF-BE-023 | Generar un `traceId` por petición (filtro web, guardado en el MDC de los logs), devolverlo en el header `X-Trace-Id` y en el campo `traceId` de los errores | Must |
 
 ---
@@ -396,7 +399,7 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
 ```
 
 ### 13.6 Cuota en memoria (decisión explícita, sin deuda oculta)
-- `InMemoryQuotaStore` usa `ConcurrentHashMap<Key, DailyCounter>` con operaciones atómicas (`compute`). Los contadores de días anteriores se limpian al cambiar de día.
+- `InMemoryQuotaStore` protege todas sus operaciones con **un único lock**: la reserva debe ser atómica sobre tres contadores (instalación, IP y global) y la concurrencia es ≤ 2, así que un lock global es más simple y seguro que operaciones atómicas por clave. Al cambiar el día se descartan todos los contadores y las reservas pendientes; una reserva del día anterior que se confirme después no cuenta en el día nuevo.
 - **Consecuencia aceptada (RN-14):** un reinicio la vacía. Como Render apaga el servicio tras 15 minutos sin tráfico, el límite global diario **no** es un tope confiable: el tope real es el saldo de créditos (25 gratuitos).
 - **Camino de evolución:** implementar `QuotaStorePort` con un almacén persistente (por ejemplo, Redis o Postgres) **sin cambios** en dominio, aplicación ni web. Los tests de contrato del puerto garantizan el mismo comportamiento.
 
@@ -616,7 +619,7 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 1. La API de SF3D quita el fondo de fotos de carros sin preprocesamiento.
 2. Las generaciones fallidas no se cobran (**PENDIENTE DE VALIDAR**).
 3. La latencia de SF3D vía API es de pocos segundos, muy por debajo de 60 s.
-4. Render entrega la IP real del cliente en `X-Forwarded-For`.
+4. Render va detrás de Cloudflare, que entrega la IP real del cliente en `CF-Connecting-IP`; `X-Forwarded-For` acumula valores de varios proxies y el primero lo controla el cliente (**PENDIENTE DE VALIDAR** en el servicio desplegado).
 5. 512 MB de RAM bastan con concurrencia 2 y entradas de hasta 10 MB.
 6. La cuenta nueva de Stability sigue recibiendo 25 créditos gratuitos y el precio de SF3D sigue en 10 créditos (**PENDIENTE DE VALIDAR** al crear la cuenta).
 
@@ -684,6 +687,8 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 | `TUNAI_QUOTA_PER_IP` | `tunai.quota.per-ip` | `2` | No |
 | `TUNAI_QUOTA_GLOBAL_DAILY` | `tunai.quota.global-daily` | `2` | No |
 | `TUNAI_QUOTA_TIMEZONE` | `tunai.quota.timezone` | `America/Bogota` | No |
+| `TUNAI_CLIENT_IP_HEADER` | `tunai.client-ip.trusted-header` | `CF-Connecting-IP` | No (vacío para no usarlo) |
+| `TUNAI_TRUSTED_PROXIES` | `tunai.client-ip.trusted-proxies` | `1` | No |
 | `TUNAI_MAX_CONCURRENT` | `tunai.generation.max-concurrent` | `2` | No |
 | `TUNAI_MAX_MODEL_BYTES` | `tunai.generation.max-model-bytes` | `20971520` (20 MB) | No |
 | `TUNAI_FAKE_DELAY` | `tunai.generator.fake.delay` | `2s` | No (simula la latencia del proveedor) |
