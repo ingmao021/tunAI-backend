@@ -4,7 +4,7 @@
 |---|---|
 | Producto | TunAI — visualización y personalización virtual de vehículos en 3D |
 | Componente | API intermediaria de generación 3D (repositorio **backend**) |
-| Versión del documento | 1.2 |
+| Versión del documento | 1.3 |
 | Fecha | 2026-10-09 (v1.0: 2026-10-03) |
 | Autor | Anderson |
 | Estado | Aprobado para MVP (con puntos **PENDIENTE DE DEFINIR / VALIDAR**) |
@@ -24,6 +24,7 @@
 | 1.0 | 2026-10-03 | Versión inicial |
 | 1.1 | 2026-10-09 | Stack alineado con el repositorio: Maven y Spring Boot 4.1.x (antes Gradle y 3.x). Presupuesto limitado a los créditos gratuitos (2 generaciones): límites por IP y global en 2; nuevo adaptador `fake` para desarrollo (RF-BE-021); sin llamadas reales durante el desarrollo (RN-15); se elimina el prototipo de la Fase 0; manejo de la clave (§18); riesgos R-BE-10 a R-BE-12; verificación de vehículo en el cliente (RN-16) |
 | 1.2 | 2026-10-09 | Revisión de huecos: IP real desde `X-Forwarded-For` (RF-BE-022); multipart solo en memoria (RF-BE-018); 415 vs 400 y 413 de Spring (§15.4); headers de cuota en 429 por IP y `Retry-After` definidos (RF-BE-015); tamaño máximo del GLB; `traceId` (RF-BE-023); liberación de la reserva ante cualquier fallo (§13.5); cuota en modo `fake` (§13.8); logs JSON nativos de Spring Boot; checklist de ensayo y demo (Anexo E); referencias obsoletas a "créditos comprados" y al prototipo corregidas |
+| 1.3 | 2026-10-09 | Fase 2: catálogo con `BAD_REQUEST`, `NOT_FOUND` y `METHOD_NOT_ALLOWED`; `type` como URN `urn:tunai:problem:*`; base URL de Render definida (P-BE-02); `POST /api/v1/generations` disponible con el proveedor `fake` antes de la cuota |
 
 **Convenciones:** igual que el PRD del frontend.
 - Prioridad MoSCoW (Must, Should, Could, Won't).
@@ -440,12 +441,12 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
 ## 15. API y comunicación entre componentes
 
 ### 15.1 Convenciones
-- **Base URL:** `https://<servicio>.onrender.com` (definitiva **PENDIENTE DE DEFINIR**).
+- **Base URL:** `https://tunai-api-qd5x.onrender.com`.
 - **Headers obligatorios en `/api/**`:** `X-Installation-Id: <UUID>`. **Opcional:** `X-Client-Version: <semver>` (solo registro).
 - **Errores:** `application/problem+json`:
 ```json
 {
-  "type": "https://tunai.app/problems/quota-exceeded",
+  "type": "urn:tunai:problem:quota-exceeded",
   "title": "Cuota diaria agotada",
   "status": 429,
   "detail": "Se alcanzó el máximo de 2 generaciones para hoy.",
@@ -453,7 +454,7 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
   "traceId": "8f2c1e..."
 }
 ```
-El dominio `tunai.app` del campo `type` es ilustrativo; la URI definitiva está **PENDIENTE DE DEFINIR**.
+El campo `type` es una URN estable (`urn:tunai:problem:<code-en-minúsculas-con-guiones>`), para no depender de un dominio propio. Cada respuesta incluye también el header `X-Trace-Id` (RF-BE-023).
 
 ### 15.2 Endpoints
 
@@ -473,7 +474,7 @@ El dominio `tunai.app` del campo `type` es ilustrativo; la URI definitiva está 
 - Respuesta `200`: `Content-Type: model/gltf-binary`, cuerpo GLB, headers `X-Quota-*`.
 - Ejemplo:
 ```bash
-curl -X POST https://<servicio>.onrender.com/api/v1/generations \
+curl -X POST https://tunai-api-qd5x.onrender.com/api/v1/generations \
   -H "X-Installation-Id: 3f1c2a9e-6d0b-4e8a-9f7c-2b5d1e4a6c80" \
   -F "image=@carro.jpg" \
   -o modelo.glb -D -
@@ -486,6 +487,7 @@ Ver `PRD-TunAI-Frontend.md` §15 y `HANDOFF-Frontend-UI.md`. Cliente: `java.net.
 
 | HTTP | `code` | Cuándo | ¿Consume cuota? |
 |---|---|---|---|
+| 400 | `BAD_REQUEST` | Petición mal formada que no encaja en otro código (genérico) | No |
 | 400 | `INVALID_INSTALLATION_ID` | Header ausente o no UUID | No |
 | 400 | `INVALID_IMAGE` | Los bytes no corresponden a ninguna imagen reconocible, dimensiones insuficientes o imagen ilegible | No |
 | 413 | `IMAGE_TOO_LARGE` | > 10 MB. Incluye el `MaxUploadSizeExceededException` que lanza Spring antes de llegar al controlador | No |
@@ -496,6 +498,8 @@ Ver `PRD-TunAI-Frontend.md` §15 y `HANDOFF-Frontend-UI.md`. Cliente: `java.net.
 | 503 | `SERVICE_BUSY` | Sin cupo de concurrencia (+ `Retry-After`) | No |
 | 503 | `SERVICE_UNAVAILABLE` | Límite global, proveedor sin créditos o con clave inválida | No |
 | 504 | `PROVIDER_TIMEOUT` | Tiempo agotado con el proveedor | No |
+| 404 | `NOT_FOUND` | La ruta no existe | No |
+| 405 | `METHOD_NOT_ALLOWED` | Método HTTP no permitido en la ruta (+ header `Allow`) | No |
 | 500 | `INTERNAL_ERROR` | Error inesperado (sin detalles internos) | No |
 
 > El cliente tiene además códigos propios que el backend nunca envía (`NOT_A_VEHICLE`, `CLIENT_TIMEOUT`, etc.); ver `HANDOFF-Frontend-UI.md` §7.
@@ -623,7 +627,7 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 | ID | Pregunta | Tipo |
 |---|---|---|
 | P-BE-01 | ¿Límite por IP = 4 y límite global = 6 por día? | Resuelta: sí en v1.0; en v1.1 ambos bajan a **2** por el presupuesto |
-| P-BE-02 | Nombre definitivo del servicio en Render (base URL) | PENDIENTE DE DEFINIR |
+| P-BE-02 | Nombre definitivo del servicio en Render (base URL) | Resuelta: `https://tunai-api-qd5x.onrender.com` (servicio `tunai-api`, región Ohio, rama `main`) |
 | P-BE-03 | Paquete raíz Java | Resuelta: `com.tunai.api` (backend) y `com.tunai.desktop` (frontend) |
 | P-BE-04 | Códigos de error exactos de Stability, si cobra los fallos y si el endpoint `v2beta` sigue vigente | PENDIENTE DE VALIDAR (antes del ensayo, en la documentación vigente) |
 | P-BE-05 | Endpoint de saldo de créditos de Stability (RF-BE-020) | PENDIENTE DE VALIDAR |
@@ -640,7 +644,7 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 |---|---|---|
 | ~~0. Prototipo~~ | **Eliminada en v1.1**: gastaría los créditos de la demo. Los supuestos 1 y 3 se evalúan en el ensayo (Fase 6) | — |
 | 1. Fundaciones | Proyecto, paquetes hexagonales, ArchUnit, CI, Dockerfile, despliegue en Render con health; adaptador `fake` (RF-BE-021); `traceId` (RF-BE-023) | `GET /actuator/health` en Render |
-| 2. Validación y errores | Objetos de valor, `ApiExceptionHandler`, catálogo de errores | Tests de cada código de error |
+| 2. Validación y errores | Objetos de valor, `ApiExceptionHandler`, catálogo de errores. Además, `POST /api/v1/generations` queda disponible con el proveedor `fake` (validación completa, **sin** cuota ni headers `X-Quota-*` hasta la Fase 3), para que el frontend integre antes | Tests de cada código de error |
 | 3. Cuota y límites | `InMemoryQuotaStore` (reservar, confirmar, liberar), límites por IP y globales, concurrencia | Tests de concurrencia y de cambio de día |
 | 4. Adaptador Stability | `StabilityFast3dAdapter` + traductor de errores, probado **solo con WireMock** (RN-15) | Tests de 200, 4xx, 5xx, tiempo agotado y no-GLB en verde |
 | 5. Integración con el frontend | Pruebas con el cliente JavaFX contra el adaptador `fake` | Flujo 1 completo |

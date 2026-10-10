@@ -322,7 +322,7 @@ Accesible desde un menú `?`:
 
 **Base URL:**
 - desarrollo: `http://localhost:8080`;
-- producción: `https://<servicio>.onrender.com` (**PENDIENTE**, backend P-BE-02).
+- producción: `https://tunai-api-qd5x.onrender.com`.
 
 Configurable con la variable de entorno `TUNAI_API_URL` o con `settings.json`.
 
@@ -357,6 +357,8 @@ Configurable con la variable de entorno `TUNAI_API_URL` o con `settings.json`.
 | `SERVICE_UNAVAILABLE` (503) | "El servicio no está disponible en este momento." | Volver al garaje |
 | `PROVIDER_TIMEOUT` (504) | "La IA tardó demasiado. No se descontó tu cuota." | Ofrecer `Reintentar` (manual) |
 | `INTERNAL_ERROR` (500) | "Ocurrió un error inesperado." | Volver al garaje |
+| `BAD_REQUEST` (400), `NOT_FOUND` (404), `METHOD_NOT_ALLOWED` (405) | "Ocurrió un error inesperado." | Son errores de programación del cliente: registrar en log con el `traceId` y volver al garaje |
+| Cualquier `code` desconocido | "Ocurrió un error inesperado." | Tratarlo como `INTERNAL_ERROR`; nunca fallar por un código nuevo |
 | `CLIENT_TIMEOUT` (cliente) | "No hubo respuesta del servidor. Revisa tu conexión." | Volver al garaje |
 | `NETWORK_ERROR` (cliente) | "Sin conexión con el servidor." | Volver al garaje |
 | `UNSUPPORTED_MODEL` (cliente) | "El modelo recibido no es compatible con el visor." | Volver al garaje y registrar en log |
@@ -405,7 +407,7 @@ Todos los errores incluyen un enlace pequeño **"Detalles"** que muestra el `tra
 | Tema | Estado |
 |---|---|
 | Texto legal de consentimiento (Ley 1581) | PENDIENTE |
-| Base URL de producción | PENDIENTE (backend P-BE-02) |
+| Base URL de producción | Resuelta: `https://tunai-api-qd5x.onrender.com` |
 | Rines: ¿recolorear zona o descartar? | PENDIENTE (PRD frontend §17) |
 | Atribución exigida por la licencia de Stability | PENDIENTE DE VALIDAR |
 | Detección de píxeles de pintura en la textura real | Se ajusta tras el ensayo |
