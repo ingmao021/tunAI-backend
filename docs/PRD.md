@@ -4,8 +4,8 @@
 |---|---|
 | Producto | TunAI — visualización y personalización virtual de vehículos en 3D |
 | Componente | API intermediaria de generación 3D (repositorio **backend**) |
-| Versión del documento | 1.6 |
-| Fecha | 2026-10-09 (v1.0: 2026-10-03) |
+| Versión del documento | 1.7 |
+| Fecha | 2026-10-10 (v1.0: 2026-10-03) |
 | Autor | Anderson |
 | Estado | Aprobado para MVP (con puntos **PENDIENTE DE DEFINIR / VALIDAR**) |
 | Documento relacionado | `PRD-TunAI-Frontend.md` (aplicación de escritorio JavaFX) |
@@ -28,6 +28,7 @@
 | 1.4 | 2026-10-09 | Cuota: la IP real sale de `CF-Connecting-IP` (Render va detrás de Cloudflare; el último valor de `X-Forwarded-For` es un proxy) (RF-BE-022, supuesto 4); los headers de cuota no exponen el límite global (RF-BE-015); la cuota en memoria usa un único lock (§13.6); variables `TUNAI_CLIENT_IP_HEADER` y `TUNAI_TRUSTED_PROXIES` |
 | 1.5 | 2026-10-09 | Adaptador de Stability: contrato verificado (endpoint vigente, campo `vertex_count`), traducción defensiva de errores (403 solo es moderación si el cuerpo lo dice), cliente HTTP/1.1, lectura acotada del GLB; variables de timeouts y `TUNAI_VERTEX_COUNT` |
 | 1.6 | 2026-10-09 | Métricas `tunai.generations` y `tunai.provider.latency` publicadas en el log; Checkstyle en el build |
+| 1.7 | 2026-10-10 | El GLB del adaptador `fake` pasa a ser una salida real de Stable Fast 3D (código abierto, en local) con el mismo formato que la API; Car Concept tenía 97 mallas y el visor lo rechazaba, así que el flujo completo no se podía probar sin gastar créditos (RF-BE-021) |
 
 **Convenciones:** igual que el PRD del frontend.
 - Prioridad MoSCoW (Must, Should, Could, Won't).
@@ -257,7 +258,7 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RF-BE-018 | No escribir imágenes ni modelos en disco; procesarlos solo en memoria. Por defecto Tomcat guarda los archivos multipart en disco temporal: se configura `spring.servlet.multipart.file-size-threshold` igual a `max-file-size` para que queden en memoria (cuenta contra RNF-BE-003) | Must |
 | RF-BE-019 | Documentar la API con OpenAPI (springdoc), habilitado solo en el perfil `dev` | Should |
 | RF-BE-020 | Antes de generar, consultar el saldo de créditos de Stability y responder `503` si es insuficiente (endpoint de saldo **PENDIENTE DE VALIDAR**) | Could |
-| RF-BE-021 | Proveer un adaptador `fake` de `ModelGeneratorPort` que devuelva un GLB de ejemplo sin llamar a ningún proveedor. El adaptador se elige con `tunai.generator.provider` (`fake` \| `stability`); el valor por defecto es `fake`, de modo que una llamada real solo ocurre si se configura `stability` de forma explícita | Must |
+| RF-BE-021 | Proveer un adaptador `fake` de `ModelGeneratorPort` que devuelva un GLB de ejemplo sin llamar a ningún proveedor. El GLB de ejemplo tiene la misma forma que la salida de Stable Fast 3D (1 malla, 1 primitiva, 1 material con textura de color base), para que el cliente pruebe el visor y el recoloreado sin gastar créditos. El adaptador se elige con `tunai.generator.provider` (`fake` \| `stability`); el valor por defecto es `fake`, de modo que una llamada real solo ocurre si se configura `stability` de forma explícita | Must |
 | RF-BE-022 | Obtener la IP real del cliente, en este orden: (1) el header de confianza del proxy de borde (`CF-Connecting-IP`: Render va detrás de Cloudflare, que lo sobrescribe); (2) el valor de `X-Forwarded-For` que agregó el primero de N proxies de confianza contando desde la derecha (N configurable, por defecto 1), **nunca** el primero de la lista, que lo controla el cliente; (3) la IP de la conexión | Must |
 | RF-BE-023 | Generar un `traceId` por petición (filtro web, guardado en el MDC de los logs), devolverlo en el header `X-Trace-Id` y en el campo `traceId` de los errores | Must |
 

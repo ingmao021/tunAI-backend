@@ -7,10 +7,12 @@ import com.tunai.api.application.port.out.ModelGeneratorPort;
 import com.tunai.api.domain.model.GenerationOptions;
 import com.tunai.api.domain.model.ImageFormat;
 import com.tunai.api.domain.model.VehicleImage;
+import java.io.IOException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 
@@ -49,11 +51,11 @@ class TunaiApiApplicationTests {
     }
 
     @Test
-    void defaultProviderIsFakeAndServesTheBundledGlb() {
+    void defaultProviderIsFakeAndServesTheBundledGlb() throws IOException {
         assertThat(modelGenerator).isInstanceOf(FakeModelGenerator.class);
 
         VehicleImage image = new VehicleImage(new byte[] {1}, ImageFormat.JPEG, 512, 512);
         assertThat(modelGenerator.generate(image, GenerationOptions.DEFAULTS).sizeInBytes())
-                .isGreaterThan(1_000_000);
+                .isEqualTo(new ClassPathResource("fake/vehicle-sample.glb").contentLength());
     }
 }
