@@ -1,0 +1,5 @@
+# Perfil de Render (SPRING_PROFILES_ACTIVE=prod): logs JSON con traceId (RNF-BE-012)
+logging:
+  structured:
+    format:
+      console: ecs

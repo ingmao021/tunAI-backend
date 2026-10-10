@@ -31,3 +31,18 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Secretos (STABILITY_API_KEY y similares; RNF-BE-006) ###
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+application-local.yaml
+application-local.yml
+application-local.properties
+
+### Windows ###
+desktop.ini
+Thumbs.db

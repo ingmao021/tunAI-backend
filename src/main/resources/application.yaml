@@ -1,3 +1,32 @@
 spring:
   application:
-    name: tunAII
+    name: tunai-api
+
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+
+# F-BE-03 / RNF-BE-008: solo health, sin detalles internos
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      show-components: never
+      # Render no usa sondas liveness/readiness; sin esto la respuesta incluye "groups" (contrato §15.2)
+      probes:
+        enabled: false
+
+# Anexo A. El proveedor por defecto es "fake": una llamada real solo ocurre si se configura "stability" (RF-BE-021)
+tunai:
+  generator:
+    provider: ${TUNAI_GENERATOR_PROVIDER:fake}
+    fake:
+      delay: ${TUNAI_FAKE_DELAY:2s}
+
+logging:
+  pattern:
+    level: "%5p [%X{traceId:-}]"
