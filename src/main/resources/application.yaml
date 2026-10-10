@@ -29,6 +29,16 @@ tunai:
     provider: ${TUNAI_GENERATOR_PROVIDER:fake}
     fake:
       delay: ${TUNAI_FAKE_DELAY:2s}
+  # Anexo A. La clave nunca va en este archivo: solo en la variable de entorno STABILITY_API_KEY (RNF-BE-006)
+  stability:
+    api-key: ${STABILITY_API_KEY:}
+    base-url: ${TUNAI_STABILITY_BASE_URL:https://api.stability.ai}
+    texture-resolution: ${TUNAI_TEXTURE_RESOLUTION:1024}
+    foreground-ratio: ${TUNAI_FOREGROUND_RATIO:0.85}
+    remesh: ${TUNAI_REMESH:none}
+    vertex-count: ${TUNAI_VERTEX_COUNT:-1}
+    connect-timeout: ${TUNAI_STABILITY_CONNECT_TIMEOUT:10s}
+    read-timeout: ${TUNAI_STABILITY_READ_TIMEOUT:60s}
   generation:
     max-model-bytes: ${TUNAI_MAX_MODEL_BYTES:20MB}
     max-concurrent: ${TUNAI_MAX_CONCURRENT:2}

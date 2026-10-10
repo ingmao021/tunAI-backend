@@ -1,6 +1,7 @@
 package com.tunai.api.config;
 
 import com.tunai.api.adapter.out.fake.FakeModelGenerator;
+import com.tunai.api.adapter.out.stability.StabilityFast3dAdapter;
 import com.tunai.api.application.port.out.ModelGeneratorPort;
 import java.io.IOException;
 import java.io.InputStream;
@@ -12,21 +13,20 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
 
-/** Ensambla el {@link ModelGeneratorPort} según {@code tunai.generator.provider}. */
+/** Ensambla el {@link ModelGeneratorPort} según {@code tunai.generator.provider} (RF-BE-021). */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(GeneratorProperties.class)
+@EnableConfigurationProperties({GeneratorProperties.class, StabilityProperties.class, GenerationProperties.class})
 public class GeneratorConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(GeneratorConfiguration.class);
 
     @Bean
-    ModelGeneratorPort modelGenerator(GeneratorProperties properties) {
-        log.info("Proveedor de generación 3D activo: {}", properties.provider());
-        return switch (properties.provider()) {
-            case FAKE -> fakeModelGenerator(properties.fake());
-            case STABILITY ->
-                throw new IllegalStateException(
-                        "El proveedor 'stability' aún no está implementado (Fase 4). Usa TUNAI_GENERATOR_PROVIDER=fake.");
+    ModelGeneratorPort modelGenerator(
+            GeneratorProperties generator, StabilityProperties stability, GenerationProperties generation) {
+        log.info("Proveedor de generación 3D activo: {}", generator.provider());
+        return switch (generator.provider()) {
+            case FAKE -> fakeModelGenerator(generator.fake());
+            case STABILITY -> stabilityModelGenerator(stability, generation);
         };
     }
 
@@ -38,6 +38,29 @@ public class GeneratorConfiguration {
                 sample.length,
                 fake.delay());
         return new FakeModelGenerator(sample, fake.delay());
+    }
+
+    /** RNF-BE-015: con el proveedor real, la app no arranca si falta la clave. */
+    private static ModelGeneratorPort stabilityModelGenerator(
+            StabilityProperties stability, GenerationProperties generation) {
+        if (!stability.hasApiKey()) {
+            throw new IllegalStateException(
+                    "El proveedor 'stability' requiere la variable de entorno STABILITY_API_KEY");
+        }
+        stability.generationOptions(); // valida los parámetros de SF3D al arrancar
+        log.warn(
+                "Generador STABILITY: cada generación exitosa gasta créditos reales. Endpoint {}, timeouts {}/{}, {}",
+                stability.baseUrl(),
+                stability.connectTimeout(),
+                stability.readTimeout(),
+                stability.generationOptions());
+        return StabilityFast3dAdapter.create(
+                stability.baseUrl(),
+                stability.apiKey(),
+                stability.connectTimeout(),
+                stability.readTimeout(),
+                generation.maxModelBytes().toBytes(),
+                stability.vertexCount());
     }
 
     private static byte[] readClasspath(String location) {

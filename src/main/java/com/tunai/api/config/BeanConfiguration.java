@@ -11,7 +11,6 @@ import com.tunai.api.application.port.out.ModelGeneratorPort;
 import com.tunai.api.application.port.out.QuotaStorePort;
 import com.tunai.api.application.service.GenerateModelService;
 import com.tunai.api.application.service.GetQuotaService;
-import com.tunai.api.domain.model.GenerationOptions;
 import com.tunai.api.domain.model.ImageDimensionsReader;
 import com.tunai.api.domain.model.ImagePolicy;
 import com.tunai.api.domain.model.QuotaLimits;
@@ -71,13 +70,13 @@ public class BeanConfiguration {
             ConcurrencyLimiterPort concurrency,
             QuotaStorePort quota,
             ModelGeneratorPort generator,
-            GenerationProperties properties) {
-        // Los parámetros de SF3D se vuelven configurables con el adaptador de Stability (RF-BE-012)
+            GenerationProperties properties,
+            StabilityProperties stability) {
         return new GenerateModelService(
                 concurrency,
                 quota,
                 generator,
-                GenerationOptions.DEFAULTS,
+                stability.generationOptions(),
                 properties.maxModelBytes().toBytes());
     }
 
