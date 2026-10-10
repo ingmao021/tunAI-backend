@@ -1,6 +1,10 @@
 package com.tunai.api.domain.model;
 
 import com.tunai.api.domain.exception.InvalidInstallationIdException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -31,6 +35,17 @@ public record InstallationId(UUID value) {
             throw new InvalidInstallationIdException("X-Installation-Id no es un UUID válido");
         }
         return new InstallationId(UUID.fromString(trimmed));
+    }
+
+    /** Huella corta para los logs: el ID no se registra en claro (RNF-BE-009). */
+    public String hashForLogs() {
+        try {
+            byte[] digest =
+                    MessageDigest.getInstance("SHA-256").digest(value.toString().getBytes(StandardCharsets.US_ASCII));
+            return HexFormat.of().formatHex(digest, 0, 6);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 no disponible", e);
+        }
     }
 
     @Override
