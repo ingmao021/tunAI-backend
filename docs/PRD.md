@@ -4,7 +4,7 @@
 |---|---|
 | Producto | TunAI — visualización y personalización virtual de vehículos en 3D |
 | Componente | API intermediaria de generación 3D (repositorio **backend**) |
-| Versión del documento | 1.4 |
+| Versión del documento | 1.5 |
 | Fecha | 2026-10-09 (v1.0: 2026-10-03) |
 | Autor | Anderson |
 | Estado | Aprobado para MVP (con puntos **PENDIENTE DE DEFINIR / VALIDAR**) |
@@ -26,6 +26,7 @@
 | 1.2 | 2026-10-09 | Revisión de huecos: IP real desde `X-Forwarded-For` (RF-BE-022); multipart solo en memoria (RF-BE-018); 415 vs 400 y 413 de Spring (§15.4); headers de cuota en 429 por IP y `Retry-After` definidos (RF-BE-015); tamaño máximo del GLB; `traceId` (RF-BE-023); liberación de la reserva ante cualquier fallo (§13.5); cuota en modo `fake` (§13.8); logs JSON nativos de Spring Boot; checklist de ensayo y demo (Anexo E); referencias obsoletas a "créditos comprados" y al prototipo corregidas |
 | 1.3 | 2026-10-09 | Catálogo con `BAD_REQUEST`, `NOT_FOUND` y `METHOD_NOT_ALLOWED`; `type` como URN `urn:tunai:problem:*`; base URL de Render definida (P-BE-02); `POST /api/v1/generations` disponible con el proveedor `fake` antes de la cuota |
 | 1.4 | 2026-10-09 | Cuota: la IP real sale de `CF-Connecting-IP` (Render va detrás de Cloudflare; el último valor de `X-Forwarded-For` es un proxy) (RF-BE-022, supuesto 4); los headers de cuota no exponen el límite global (RF-BE-015); la cuota en memoria usa un único lock (§13.6); variables `TUNAI_CLIENT_IP_HEADER` y `TUNAI_TRUSTED_PROXIES` |
+| 1.5 | 2026-10-09 | Adaptador de Stability: contrato verificado (endpoint vigente, campo `vertex_count`), traducción defensiva de errores (403 solo es moderación si el cuerpo lo dice), cliente HTTP/1.1, lectura acotada del GLB; variables de timeouts y `TUNAI_VERTEX_COUNT` |
 
 **Convenciones:** igual que el PRD del frontend.
 - Prioridad MoSCoW (Must, Should, Could, Won't).
@@ -77,11 +78,13 @@ Sin backend, la clave de Stability tendría que ir dentro de la app y cualquiera
 ### 2.1 Proveedor elegido: Stable Fast 3D (API Stability AI)
 - **Endpoint:** `POST https://api.stability.ai/v2beta/3d/stable-fast-3d` (multipart).
 - **Autenticación:** `Authorization: Bearer <API_KEY>`.
+- **Vigencia (2026-10-09):** la documentación oficial sigue enlazando `/v2beta/3d/stable-fast-3d` con precio de 10 créditos. La especificación OpenAPI y el catálogo de errores no son públicos.
 - **Parámetros conocidos:**
   - `image` (obligatorio);
   - `texture_resolution` (`512` | `1024` | `2048`);
   - `foreground_ratio` (0,1–1,0; por defecto 0,85);
-  - `remesh` (`none` | `quad` | `triangle`).
+  - `remesh` (`none` | `quad` | `triangle`);
+  - `vertex_count` (opcional; `-1` = valor del proveedor). Verificado en el notebook oficial `Stable_3D_API.ipynb`.
 - **Respuesta:** GLB (glTF binario) con malla UV-desenvuelta, textura base sin iluminación y parámetros de material.
 - **Fondo:** la API lo elimina automáticamente. **PENDIENTE DE VALIDAR** con fotos reales de carros.
 - **Costo:** 10 créditos por generación (1 crédito = 0,01 USD → ~0,10 USD). Las cuentas nuevas reciben 25 créditos gratuitos.
@@ -350,9 +353,10 @@ com.tunai.api
 │   ├── in.web       (GenerationController, QuotaController, ApiExceptionHandler,
 │   │                 ClientContextResolver, ImageRequestMapper, QuotaHeaders)
 │   └── out
-│       ├── stability (StabilityFast3dAdapter, StabilityProperties, StabilityErrorTranslator)
+│       ├── stability (StabilityFast3dAdapter, StabilityErrorTranslator; StabilityProperties vive en config)
 │       ├── fake      (FakeModelGenerator: GLB de ejemplo para desarrollo, RF-BE-021)
 │       ├── quota     (InMemoryQuotaStore, DailyCounter)
+│       ├── imageio   (ImageIoDimensionsReader)
 │       └── concurrency (SemaphoreConcurrencyLimiter)
 └── config           (TunaiProperties, BeanConfiguration, ClockConfiguration, WebConfiguration)
 ```
@@ -406,12 +410,16 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
 ### 13.7 Comunicación con Stability
 - `RestClient` de Spring (síncrono; una petición por hilo es suficiente con concurrencia ≤ 2), con los timeouts de RNF-BE-002.
 - Cuerpo multipart con `image`, `texture_resolution`, `foreground_ratio` y `remesh`.
-- **Mapeo de errores del proveedor** (los códigos exactos que devuelve Stability están **PENDIENTE DE VALIDAR** con la documentación vigente):
-  - 400 y 422 → `ProviderRejectedException`;
-  - 401, 402 y 403 → `ProviderUnavailableException`;
-  - 429 → `ProviderUnavailableException` con `Retry-After`;
-  - 5xx → `ProviderFailureException`;
-  - timeout → `ProviderTimeoutException`.
+- **Cliente:** HTTP/1.1 explícito (una subida por petición no gana nada con HTTP/2 y el *upgrade* h2c falla con algunos servidores). El multipart se arma a mano: en Spring 7, `MultipartBodyBuilder` depende de Reactive Streams, que la app no incluye.
+- **Respuesta:** se lee como máximo `max-model-bytes + 1` para detectar un GLB demasiado grande sin cargarlo entero.
+- **Mapeo de errores del proveedor** (`StabilityErrorTranslator`). Stability no publica el catálogo de errores de este endpoint, así que la traducción es defensiva (P-BE-04):
+  - 400, 413 y 422 → `ProviderRejectedException` (422);
+  - 403 → `ProviderRejectedException` si el cuerpo menciona *moderation*; si no, `ProviderUnavailableException` (503);
+  - 401, 402 y 404 → `ProviderUnavailableException` (503, log ERROR: clave, créditos o endpoint);
+  - 429 → `ProviderUnavailableException` con `Retry-After` si viene en segundos;
+  - 5xx y cualquier otro → `ProviderFailureException` (502);
+  - timeout de conexión o de respuesta → `ProviderTimeoutException` (504); sin conexión → `ProviderFailureException`.
+- El cuerpo de error se resume (máx. 500 caracteres) solo en el log interno; nunca llega al cliente.
 
 ### 13.8 Cuota en modo `fake`
 - La cuota se aplica igual con el proveedor `fake`, para poder probar `429` y los headers.
@@ -632,7 +640,7 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 | P-BE-01 | ¿Límite por IP = 4 y límite global = 6 por día? | Resuelta: sí en v1.0; en v1.1 ambos bajan a **2** por el presupuesto |
 | P-BE-02 | Nombre definitivo del servicio en Render (base URL) | Resuelta: `https://tunai-api-qd5x.onrender.com` (servicio `tunai-api`, región Ohio, rama `main`) |
 | P-BE-03 | Paquete raíz Java | Resuelta: `com.tunai.api` (backend) y `com.tunai.desktop` (frontend) |
-| P-BE-04 | Códigos de error exactos de Stability, si cobra los fallos y si el endpoint `v2beta` sigue vigente | PENDIENTE DE VALIDAR (antes del ensayo, en la documentación vigente) |
+| P-BE-04 | Códigos de error exactos de Stability, si cobra los fallos y si el endpoint `v2beta` sigue vigente | Parcial: endpoint y campos verificados (2026-10-09); catálogo de errores y cobro de fallos no publicados, se cubren con traducción defensiva (§13.7) y se observan en el ensayo |
 | P-BE-05 | Endpoint de saldo de créditos de Stability (RF-BE-020) | PENDIENTE DE VALIDAR |
 | P-BE-06 | Retención de imágenes por Stability y base legal (Ley 1581) | PENDIENTE DE VALIDAR |
 | P-BE-07 | Cobertura mínima de pruebas | Resuelta: 70 % en dominio y aplicación |
@@ -683,6 +691,9 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 | `TUNAI_TEXTURE_RESOLUTION` | `tunai.stability.texture-resolution` | `1024` | No |
 | `TUNAI_FOREGROUND_RATIO` | `tunai.stability.foreground-ratio` | `0.85` | No |
 | `TUNAI_REMESH` | `tunai.stability.remesh` | `none` | No |
+| `TUNAI_VERTEX_COUNT` | `tunai.stability.vertex-count` | `-1` (no se envía) | No |
+| `TUNAI_STABILITY_CONNECT_TIMEOUT` | `tunai.stability.connect-timeout` | `10s` | No |
+| `TUNAI_STABILITY_READ_TIMEOUT` | `tunai.stability.read-timeout` | `60s` | No |
 | `TUNAI_QUOTA_PER_INSTALLATION` | `tunai.quota.per-installation` | `2` | No |
 | `TUNAI_QUOTA_PER_IP` | `tunai.quota.per-ip` | `2` | No |
 | `TUNAI_QUOTA_GLOBAL_DAILY` | `tunai.quota.global-daily` | `2` | No |
