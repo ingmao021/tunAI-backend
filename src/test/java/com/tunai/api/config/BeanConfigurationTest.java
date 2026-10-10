@@ -8,8 +8,8 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 class BeanConfigurationTest {
 
-    private final ApplicationContextRunner runner =
-            new ApplicationContextRunner().withUserConfiguration(GeneratorConfiguration.class, BeanConfiguration.class);
+    private final ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withUserConfiguration(GeneratorConfiguration.class, ClockConfiguration.class, BeanConfiguration.class);
 
     @Test
     void multipartLimitsDeriveFromTheImageLimit() {

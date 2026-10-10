@@ -4,63 +4,195 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.tunai.api.application.port.in.GenerateModelUseCase.GenerateCommand;
+import com.tunai.api.application.port.in.GenerateModelUseCase.GenerationResult;
+import com.tunai.api.application.port.out.ConcurrencyLimiterPort;
 import com.tunai.api.application.port.out.ModelGeneratorPort;
+import com.tunai.api.application.port.out.QuotaStorePort;
 import com.tunai.api.domain.exception.ProviderFailureException;
+import com.tunai.api.domain.exception.ProviderRejectedException;
+import com.tunai.api.domain.exception.ProviderTimeoutException;
+import com.tunai.api.domain.exception.QuotaExceededException;
+import com.tunai.api.domain.exception.ServiceBusyException;
+import com.tunai.api.domain.model.ClientIp;
 import com.tunai.api.domain.model.GeneratedModel;
 import com.tunai.api.domain.model.GenerationOptions;
 import com.tunai.api.domain.model.ImageFormat;
 import com.tunai.api.domain.model.InstallationId;
+import com.tunai.api.domain.model.QuotaReservation;
+import com.tunai.api.domain.model.QuotaStatus;
 import com.tunai.api.domain.model.VehicleImage;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
+/** §13.5: permiso → reserva → proveedor → confirmar; ante cualquier fallo se libera la reserva (RN-03). */
 class GenerateModelServiceTest {
 
     private static final byte[] GLB = "glTF\u0002\u0000\u0000\u0000".getBytes(StandardCharsets.ISO_8859_1);
+    private static final QuotaStatus AFTER_COMMIT = new QuotaStatus(2, 1, Instant.parse("2026-10-10T05:00:00Z"));
     private static final GenerateCommand COMMAND = new GenerateCommand(
-            new InstallationId(UUID.randomUUID()), new VehicleImage(new byte[] {1}, ImageFormat.JPEG, 512, 512));
+            new InstallationId(UUID.randomUUID()),
+            ClientIp.parse("1.2.3.4").orElseThrow(),
+            new VehicleImage(new byte[] {1}, ImageFormat.JPEG, 512, 512));
 
-    @Test
-    void returnsTheGeneratedModelWithTheConfiguredOptions() {
-        GenerationOptions options = new GenerationOptions(512, 0.9, GenerationOptions.Remesh.QUAD);
-        ModelGeneratorPort generator = (image, opts) -> {
-            assertThat(opts).isEqualTo(options);
+    private final List<String> events = new ArrayList<>();
+    private final RecordingQuota quota = new RecordingQuota();
+    private final RecordingLimiter limiter = new RecordingLimiter();
+
+    private GenerateModelService service(ModelGeneratorPort generator, long maxModelBytes) {
+        return new GenerateModelService(limiter, quota, generator, GenerationOptions.DEFAULTS, maxModelBytes);
+    }
+
+    private ModelGeneratorPort succeeding() {
+        return (image, options) -> {
+            events.add("generate");
             return GeneratedModel.fromGlb(GLB);
         };
-
-        GeneratedModel model = new GenerateModelService(generator, options, 1024).generate(COMMAND);
-
-        assertThat(model.toByteArray()).isEqualTo(GLB);
     }
 
     @Test
-    void rejectsAModelLargerThanTheMaximum() {
-        ModelGeneratorPort generator = (image, opts) -> GeneratedModel.fromGlb(GLB);
-        GenerateModelService service = new GenerateModelService(generator, GenerationOptions.DEFAULTS, GLB.length - 1);
+    void successCommitsTheReservationAndReturnsTheQuota() {
+        GenerationResult result = service(succeeding(), 1024).generate(COMMAND);
 
-        assertThatThrownBy(() -> service.generate(COMMAND)).isInstanceOf(ProviderFailureException.class);
+        assertThat(result.model().toByteArray()).isEqualTo(GLB);
+        assertThat(result.quota()).isEqualTo(AFTER_COMMIT);
+        assertThat(events).containsExactly("acquire", "reserve", "generate", "commit", "close");
+    }
+
+    @Test
+    void passesTheConfiguredOptionsToTheProvider() {
+        GenerationOptions options = new GenerationOptions(512, 0.9, GenerationOptions.Remesh.QUAD);
+        ModelGeneratorPort generator = (image, opts) -> {
+            assertThat(opts).isEqualTo(options);
+            assertThat(image).isSameAs(COMMAND.image());
+            return GeneratedModel.fromGlb(GLB);
+        };
+
+        new GenerateModelService(limiter, quota, generator, options, 1024).generate(COMMAND);
+    }
+
+    static Stream<Supplier<RuntimeException>> providerFailures() {
+        return Stream.of(
+                () -> new ProviderRejectedException("moderación"),
+                () -> new ProviderFailureException("5xx"),
+                () -> new ProviderTimeoutException("timeout", null),
+                () -> new IllegalStateException("error inesperado"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("providerFailures")
+    void anyFailureReleasesTheReservationAndThePermit(Supplier<RuntimeException> failure) {
+        ModelGeneratorPort failing = (image, options) -> {
+            events.add("generate");
+            throw failure.get();
+        };
+
+        assertThatThrownBy(() -> service(failing, 1024).generate(COMMAND)).isInstanceOf(RuntimeException.class);
+        assertThat(events).containsExactly("acquire", "reserve", "generate", "release", "close");
+    }
+
+    @Test
+    void anOversizedModelIsAProviderFailureAndReleasesTheReservation() {
+        assertThatThrownBy(() -> service(succeeding(), GLB.length - 1).generate(COMMAND))
+                .isInstanceOf(ProviderFailureException.class);
+        assertThat(events).containsExactly("acquire", "reserve", "generate", "release", "close");
+    }
+
+    @Test
+    void aFailedCommitStillReleasesTheReservation() {
+        quota.failOnCommit = true;
+
+        assertThatThrownBy(() -> service(succeeding(), 1024).generate(COMMAND))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(events).containsExactly("acquire", "reserve", "generate", "commit", "release", "close");
+    }
+
+    @Test
+    void exhaustedQuotaNeverCallsTheProvider() {
+        quota.rejectReserve = true;
+
+        assertThatThrownBy(() -> service(succeeding(), 1024).generate(COMMAND))
+                .isInstanceOf(QuotaExceededException.class);
+        assertThat(events).containsExactly("acquire", "reserve", "close");
+    }
+
+    @Test
+    void noConcurrencySlotMeansNoReservationAndNoProviderCall() {
+        limiter.busy = true;
+
+        assertThatThrownBy(() -> service(succeeding(), 1024).generate(COMMAND))
+                .isInstanceOf(ServiceBusyException.class);
+        assertThat(events).containsExactly("acquire");
     }
 
     @Test
     void neverRetriesTheProvider() {
-        AtomicInteger calls = new AtomicInteger();
-        ModelGeneratorPort failing = (image, opts) -> {
-            calls.incrementAndGet();
+        ModelGeneratorPort failing = (image, options) -> {
+            events.add("generate");
             throw new ProviderFailureException("5xx");
         };
-        GenerateModelService service = new GenerateModelService(failing, GenerationOptions.DEFAULTS, 1024);
 
-        assertThatThrownBy(() -> service.generate(COMMAND)).isInstanceOf(ProviderFailureException.class);
-        assertThat(calls).hasValue(1);
+        assertThatThrownBy(() -> service(failing, 1024).generate(COMMAND)).isInstanceOf(ProviderFailureException.class);
+        assertThat(events).filteredOn("generate"::equals).hasSize(1);
     }
 
     @Test
     void rejectsANonPositiveMaximum() {
-        ModelGeneratorPort generator = (image, opts) -> GeneratedModel.fromGlb(GLB);
+        assertThatThrownBy(() -> service(succeeding(), 0)).isInstanceOf(IllegalArgumentException.class);
+    }
 
-        assertThatThrownBy(() -> new GenerateModelService(generator, GenerationOptions.DEFAULTS, 0))
-                .isInstanceOf(IllegalArgumentException.class);
+    private final class RecordingQuota implements QuotaStorePort {
+        boolean rejectReserve;
+        boolean failOnCommit;
+
+        @Override
+        public QuotaReservation tryReserve(InstallationId installationId, ClientIp clientIp) {
+            events.add("reserve");
+            if (rejectReserve) {
+                throw new QuotaExceededException("agotada", new QuotaStatus(2, 0, Instant.EPOCH), Duration.ofHours(1));
+            }
+            return new QuotaReservation(UUID.randomUUID(), installationId, clientIp, LocalDate.of(2026, 10, 9));
+        }
+
+        @Override
+        public QuotaStatus commit(QuotaReservation reservation) {
+            events.add("commit");
+            if (failOnCommit) {
+                throw new IllegalStateException("fallo al confirmar");
+            }
+            return AFTER_COMMIT;
+        }
+
+        @Override
+        public void release(QuotaReservation reservation) {
+            events.add("release");
+        }
+
+        @Override
+        public QuotaStatus status(InstallationId installationId, ClientIp clientIp) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    private final class RecordingLimiter implements ConcurrencyLimiterPort {
+        boolean busy;
+
+        @Override
+        public Permit acquire() {
+            events.add("acquire");
+            if (busy) {
+                throw new ServiceBusyException("ocupado", Duration.ofSeconds(5));
+            }
+            return () -> events.add("close");
+        }
     }
 }

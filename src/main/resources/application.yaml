@@ -31,6 +31,17 @@ tunai:
       delay: ${TUNAI_FAKE_DELAY:2s}
   generation:
     max-model-bytes: ${TUNAI_MAX_MODEL_BYTES:20MB}
+    max-concurrent: ${TUNAI_MAX_CONCURRENT:2}
+  # Valores de la demo (2). En desarrollo súbelos, p. ej. TUNAI_QUOTA_PER_INSTALLATION=50 (§13.8)
+  quota:
+    per-installation: ${TUNAI_QUOTA_PER_INSTALLATION:2}
+    per-ip: ${TUNAI_QUOTA_PER_IP:2}
+    global-daily: ${TUNAI_QUOTA_GLOBAL_DAILY:2}
+    timezone: ${TUNAI_QUOTA_TIMEZONE:America/Bogota}
+  # RF-BE-022: Render va detrás de Cloudflare, que fija CF-Connecting-IP
+  client-ip:
+    trusted-header: ${TUNAI_CLIENT_IP_HEADER:CF-Connecting-IP}
+    trusted-proxies: ${TUNAI_TRUSTED_PROXIES:1}
   image:
     max-bytes: ${TUNAI_MAX_IMAGE_BYTES:10MB}
     min-side: ${TUNAI_MIN_IMAGE_SIDE:512}

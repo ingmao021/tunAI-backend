@@ -13,8 +13,17 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
 
-/** F-BE-01 de extremo a extremo con el proveedor {@code fake} (flujos A1 y A2). */
-@SpringBootTest(properties = "tunai.generator.fake.delay=0s")
+/**
+ * F-BE-01 de extremo a extremo con el proveedor {@code fake} (flujos A1 y A2). Los límites se suben para que la cuota no
+ * interfiera; la cuota se prueba en {@link QuotaApiTest}.
+ */
+@SpringBootTest(
+        properties = {
+            "tunai.generator.fake.delay=0s",
+            "tunai.quota.per-installation=1000",
+            "tunai.quota.per-ip=1000",
+            "tunai.quota.global-daily=1000"
+        })
 @AutoConfigureMockMvc
 class GenerationApiTest {
 
@@ -32,6 +41,9 @@ class GenerationApiTest {
         byte[] body = result.getResponse().getContentAsByteArray();
         assertThat(Arrays.copyOf(body, 4)).isEqualTo("glTF".getBytes(StandardCharsets.US_ASCII));
         assertThat(result.getResponse().getContentLengthLong()).isEqualTo(body.length);
+        assertThat(result)
+                .headers()
+                .containsHeaders("X-Quota-Limit", "X-Quota-Remaining", "X-Quota-Reset", "X-Trace-Id");
     }
 
     @Test

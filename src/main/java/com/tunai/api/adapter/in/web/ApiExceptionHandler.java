@@ -68,7 +68,15 @@ public class ApiExceptionHandler {
         ErrorCode code = DOMAIN_CODES.getOrDefault(e.getClass(), ErrorCode.INTERNAL_ERROR);
         String detail = PUBLIC_DETAILS.getOrDefault(e.getClass(), e.getMessage());
         logDomain(code, e);
-        return problem(code, detail, e.retryAfter());
+        ResponseEntity<ProblemDetail> response = problem(code, detail, e.retryAfter());
+        if (e instanceof QuotaExceededException quotaExceeded) {
+            // A4: el 429 lleva los headers de cuota además de Retry-After
+            HttpHeaders headers = new HttpHeaders();
+            headers.putAll(response.getHeaders());
+            QuotaHeaders.write(headers, quotaExceeded.status());
+            return new ResponseEntity<>(response.getBody(), headers, response.getStatusCode());
+        }
+        return response;
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)

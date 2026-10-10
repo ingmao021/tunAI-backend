@@ -14,7 +14,9 @@ import com.tunai.api.domain.exception.ProviderUnavailableException;
 import com.tunai.api.domain.exception.QuotaExceededException;
 import com.tunai.api.domain.exception.ServiceBusyException;
 import com.tunai.api.domain.exception.UnsupportedImageFormatException;
+import com.tunai.api.domain.model.QuotaStatus;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
@@ -32,6 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
 class ApiExceptionHandlerTest {
 
     private static final ThreadLocal<Supplier<? extends Exception>> TO_THROW = new ThreadLocal<>();
+    private static final QuotaStatus EXHAUSTED = new QuotaStatus(2, 0, Instant.parse("2026-10-10T05:00:00Z"));
 
     private final MockMvcTester mvc = MockMvcTester.create(MockMvcBuilders.standaloneSetup(new ThrowingController())
             .setControllerAdvice(new ApiExceptionHandler())
@@ -72,7 +75,8 @@ class ApiExceptionHandlerTest {
                         "PROVIDER_REJECTED",
                         none),
                 Arguments.of(
-                        (Supplier<DomainException>) () -> new QuotaExceededException("x", Duration.ofMinutes(90)),
+                        (Supplier<DomainException>)
+                                () -> new QuotaExceededException("x", EXHAUSTED, Duration.ofMinutes(90)),
                         429,
                         "QUOTA_EXCEEDED",
                         Duration.ofMinutes(90)),
@@ -123,6 +127,18 @@ class ApiExceptionHandlerTest {
         } else {
             assertThat(result).headers().hasValue("Retry-After", retryAfter.toSeconds());
         }
+    }
+
+    @Test
+    void quotaExceededCarriesTheQuotaHeaders() {
+        MvcTestResult result = call(() -> new QuotaExceededException("agotada", EXHAUSTED, Duration.ofMinutes(90)));
+
+        assertThat(result)
+                .headers()
+                .hasValue("X-Quota-Limit", 2)
+                .hasValue("X-Quota-Remaining", 0)
+                .hasValue("X-Quota-Reset", "2026-10-10T05:00:00Z")
+                .hasValue("Retry-After", 5400);
     }
 
     @Test
