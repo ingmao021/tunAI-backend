@@ -5,6 +5,9 @@ spring:
 server:
   port: ${PORT:8080}
   shutdown: graceful
+  tomcat:
+    # Con el valor por defecto (2 MB) Tomcat corta la conexión ante una subida grande en vez de dejar responder 413
+    max-swallow-size: 20MB
 
 # F-BE-03 / RNF-BE-008: solo health, sin detalles internos
 management:
@@ -26,6 +29,11 @@ tunai:
     provider: ${TUNAI_GENERATOR_PROVIDER:fake}
     fake:
       delay: ${TUNAI_FAKE_DELAY:2s}
+  generation:
+    max-model-bytes: ${TUNAI_MAX_MODEL_BYTES:20MB}
+  image:
+    max-bytes: ${TUNAI_MAX_IMAGE_BYTES:10MB}
+    min-side: ${TUNAI_MIN_IMAGE_SIDE:512}
 
 logging:
   pattern:
