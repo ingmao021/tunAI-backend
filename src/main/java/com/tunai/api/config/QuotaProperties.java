@@ -8,13 +8,15 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.validation.annotation.Validated;
 
 /**
- * Límites diarios de generaciones exitosas (RN-02, RN-10, RN-11, Anexo A). Los valores por defecto (2) son los de la
- * demo; en desarrollo se suben por variables de entorno (§13.8).
+ * Límites de uso (RN-02, RN-10, RN-11, Anexo A). Cada instalación recibe {@code initialCredits} una vez y cada modelo
+ * usa {@code creditsPerModel} (45 y 15: tres modelos). Los límites diarios por IP y global (2) son los de la demo; en
+ * desarrollo se suben por variables de entorno (§13.8).
  */
 @Validated
 @ConfigurationProperties("tunai.quota")
 public record QuotaProperties(
-        @Min(1) @DefaultValue("2") int perInstallation,
+        @Min(0) @DefaultValue("45") int initialCredits,
+        @Min(1) @DefaultValue("15") int creditsPerModel,
         @Min(1) @DefaultValue("2") int perIp,
         @Min(1) @DefaultValue("2") int globalDaily,
         @NotNull @DefaultValue("America/Bogota") ZoneId timezone) {}

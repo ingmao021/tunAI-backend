@@ -21,7 +21,7 @@ import org.springframework.test.web.servlet.assertj.MvcTestResult;
 @SpringBootTest(
         properties = {
             "tunai.generator.fake.delay=0s",
-            "tunai.quota.per-installation=1000",
+            "tunai.quota.initial-credits=15000",
             "tunai.quota.per-ip=1000",
             "tunai.quota.global-daily=1000"
         })

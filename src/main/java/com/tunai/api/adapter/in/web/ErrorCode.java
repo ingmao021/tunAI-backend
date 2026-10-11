@@ -14,6 +14,7 @@ enum ErrorCode {
     IMAGE_TOO_LARGE(HttpStatus.CONTENT_TOO_LARGE, "Imagen demasiado grande"),
     UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Formato no soportado"),
     PROVIDER_REJECTED(HttpStatus.UNPROCESSABLE_CONTENT, "Imagen rechazada"),
+    INSUFFICIENT_CREDITS(HttpStatus.PAYMENT_REQUIRED, "Créditos insuficientes"),
     QUOTA_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "Cuota diaria agotada"),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "Error interno"),
     PROVIDER_ERROR(HttpStatus.BAD_GATEWAY, "Error del proveedor"),

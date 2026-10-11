@@ -38,7 +38,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 class GenerateModelServiceTest {
 
     private static final byte[] GLB = "glTF\u0002\u0000\u0000\u0000".getBytes(StandardCharsets.ISO_8859_1);
-    private static final QuotaStatus AFTER_COMMIT = new QuotaStatus(2, 1, Instant.parse("2026-10-10T05:00:00Z"));
+    private static final QuotaStatus AFTER_COMMIT =
+            new QuotaStatus(3, 2, Instant.parse("2026-10-10T05:00:00Z"), 30, 15);
     private static final GenerateCommand COMMAND = new GenerateCommand(
             new InstallationId(UUID.randomUUID()),
             ClientIp.parse("1.2.3.4").orElseThrow(),
@@ -158,7 +159,8 @@ class GenerateModelServiceTest {
         public QuotaReservation tryReserve(InstallationId installationId, ClientIp clientIp) {
             events.add("reserve");
             if (rejectReserve) {
-                throw new QuotaExceededException("agotada", new QuotaStatus(2, 0, Instant.EPOCH), Duration.ofHours(1));
+                throw new QuotaExceededException(
+                        "agotada", new QuotaStatus(2, 0, Instant.EPOCH, 45, 15), Duration.ofHours(1));
             }
             return new QuotaReservation(UUID.randomUUID(), installationId, clientIp, LocalDate.of(2026, 10, 9));
         }

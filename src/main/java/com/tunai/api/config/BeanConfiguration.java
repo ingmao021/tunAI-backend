@@ -56,8 +56,8 @@ public class BeanConfiguration {
 
     @Bean
     QuotaStorePort quotaStore(QuotaProperties quota, GeneratorProperties generator, Clock clock) {
-        QuotaLimits limits =
-                new QuotaLimits(quota.perInstallation(), quota.perIp(), quota.globalDaily(), quota.timezone());
+        QuotaLimits limits = new QuotaLimits(
+                quota.initialCredits(), quota.creditsPerModel(), quota.perIp(), quota.globalDaily(), quota.timezone());
         logEffectiveLimits(limits, generator.provider());
         return new InMemoryQuotaStore(limits, clock);
     }
@@ -108,8 +108,10 @@ public class BeanConfiguration {
     /** §13.8: el operador ve al arrancar qué proveedor y qué límites quedaron activos. */
     private static void logEffectiveLimits(QuotaLimits limits, GeneratorProperties.Provider provider) {
         log.info(
-                "Cuota diaria: {} por instalación, {} por IP, {} global; reinicio a las 00:00 {} (proveedor {})",
-                limits.perInstallation(),
+                "Cuota: {} créditos por instalación, {} por modelo; diaria {} por IP, {} global; reinicio a las"
+                        + " 00:00 {} (proveedor {})",
+                limits.initialCredits(),
+                limits.creditsPerModel(),
                 limits.perIp(),
                 limits.globalDaily(),
                 limits.zone(),

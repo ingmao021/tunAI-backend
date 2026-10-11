@@ -20,7 +20,8 @@ import org.springframework.test.web.servlet.assertj.MvcTestResult;
 @SpringBootTest(
         properties = {
             "tunai.generator.fake.delay=0s",
-            "tunai.quota.per-installation=2",
+            "tunai.quota.initial-credits=30",
+            "tunai.quota.credits-per-model=15",
             "tunai.quota.per-ip=3",
             "tunai.quota.global-daily=1000"
         })
@@ -45,11 +46,16 @@ class QuotaApiTest {
                 .headers()
                 .hasValue("X-Quota-Limit", 2)
                 .hasValue("X-Quota-Remaining", 2)
+                .hasValue("X-Credits-Balance", 30)
+                .hasValue("X-Credits-Per-Model", 15)
                 .containsHeader("X-Quota-Reset");
         assertThat(first)
                 .bodyJson()
                 .hasPathSatisfying("$.limit", v -> assertThat(v).asNumber().isEqualTo(2))
                 .hasPathSatisfying("$.remaining", v -> assertThat(v).asNumber().isEqualTo(2))
+                .hasPathSatisfying("$.credits", v -> assertThat(v).asNumber().isEqualTo(30))
+                .hasPathSatisfying(
+                        "$.creditsPerModel", v -> assertThat(v).asNumber().isEqualTo(15))
                 .hasPathSatisfying(
                         "$.resetsAt", v -> assertThat(v).asString().matches("\\d{4}-\\d{2}-\\d{2}T05:00:00Z"));
         assertThat(quota(installation, ip))
@@ -67,24 +73,34 @@ class QuotaApiTest {
     }
 
     @Test
-    void theThirdSuccessfulGenerationOfTheDayIsRejectedWith429() {
-        assertThat(generate(installation, ip)).hasStatusOk().headers().hasValue("X-Quota-Remaining", 1);
-        assertThat(generate(installation, ip)).hasStatusOk().headers().hasValue("X-Quota-Remaining", 0);
+    void withoutCreditsTheNextGenerationIsRejectedWith402() {
+        assertThat(generate(installation, ip))
+                .hasStatusOk()
+                .headers()
+                .hasValue("X-Quota-Remaining", 1)
+                .hasValue("X-Credits-Balance", 15);
+        assertThat(generate(installation, ip))
+                .hasStatusOk()
+                .headers()
+                .hasValue("X-Quota-Remaining", 0)
+                .hasValue("X-Credits-Balance", 0);
 
         MvcTestResult third = generate(installation, ip);
 
         assertThat(third)
-                .hasStatus(429)
+                .hasStatus(402)
                 .hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
                 .headers()
                 .hasValue("X-Quota-Remaining", 0)
-                .containsHeaders("Retry-After", "X-Quota-Limit", "X-Quota-Reset");
+                .hasValue("X-Credits-Balance", 0)
+                .containsHeaders("X-Quota-Limit", "X-Quota-Reset")
+                .doesNotContainHeader("Retry-After");
         assertThat(third)
                 .bodyJson()
-                .hasPathSatisfying("$.code", v -> assertThat(v).asString().isEqualTo("QUOTA_EXCEEDED"));
+                .hasPathSatisfying("$.code", v -> assertThat(v).asString().isEqualTo("INSUFFICIENT_CREDITS"));
         assertThat(quota(installation, ip))
                 .bodyJson()
-                .hasPathSatisfying("$.remaining", v -> assertThat(v).asNumber().isEqualTo(0));
+                .hasPathSatisfying("$.credits", v -> assertThat(v).asNumber().isEqualTo(0));
     }
 
     @Test
@@ -100,7 +116,7 @@ class QuotaApiTest {
         assertThat(invalid).hasStatus(400);
         assertThat(quota(installation, ip))
                 .bodyJson()
-                .hasPathSatisfying("$.remaining", v -> assertThat(v).asNumber().isEqualTo(2));
+                .hasPathSatisfying("$.credits", v -> assertThat(v).asNumber().isEqualTo(30));
     }
 
     @Test

@@ -55,9 +55,11 @@ tunai:
   generation:
     max-model-bytes: ${TUNAI_MAX_MODEL_BYTES:20MB}
     max-concurrent: ${TUNAI_MAX_CONCURRENT:2}
-  # Valores de la demo (2). En desarrollo súbelos, p. ej. TUNAI_QUOTA_PER_INSTALLATION=50 (§13.8)
+  # Créditos por instalación (45, sin renovación) y costo por modelo (15). Los límites diarios por IP y global son los
+  # de la demo (2); en desarrollo súbelos, p. ej. TUNAI_QUOTA_PER_IP=50 (§13.8)
   quota:
-    per-installation: ${TUNAI_QUOTA_PER_INSTALLATION:2}
+    initial-credits: ${TUNAI_CREDITS_INITIAL:45}
+    credits-per-model: ${TUNAI_CREDITS_PER_MODEL:15}
     per-ip: ${TUNAI_QUOTA_PER_IP:2}
     global-daily: ${TUNAI_QUOTA_GLOBAL_DAILY:2}
     timezone: ${TUNAI_QUOTA_TIMEZONE:America/Bogota}

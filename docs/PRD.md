@@ -30,6 +30,7 @@
 | 1.6 | 2026-10-09 | Métricas `tunai.generations` y `tunai.provider.latency` publicadas en el log; Checkstyle en el build |
 | 1.7 | 2026-10-10 | El GLB del adaptador `fake` pasa a ser una salida real de Stable Fast 3D (código abierto, en local) con el mismo formato que la API; Car Concept tenía 97 mallas y el visor lo rechazaba, así que el flujo completo no se podía probar sin gastar créditos (RF-BE-021) |
 | 1.8 | 2026-10-10 | Ensayo real con SF3D superado (GLB de 877 KB aceptado por el visor), pero con calidad insuficiente para la demo. Nuevo proveedor principal **Tripo API v3** (§2.1.1, RF-BE-024, §13.9) con presupuesto mínimo de pago (RN-17); Stability queda como respaldo. Variables `TRIPO_API_KEY` y `TUNAI_TRIPO_*` (Anexo A), checklist de Tripo (Anexo E), riesgos R-BE-13 y R-BE-14, pregunta P-BE-10 |
+| 1.9 | 2026-10-11 | Créditos por instalación (RN-02): 45 al instalar, 15 por modelo, sin renovación diaria. Sin créditos para otro modelo → `402 INSUFFICIENT_CREDITS` (sin `Retry-After`) y el cliente ofrece los planes. `GET /api/v1/quota` y los headers informan el saldo (`credits`, `creditsPerModel`, `X-Credits-Balance`, `X-Credits-Per-Model`). Los límites diarios por IP y global no cambian. `TUNAI_QUOTA_PER_INSTALLATION` se reemplaza por `TUNAI_CREDITS_INITIAL` y `TUNAI_CREDITS_PER_MODEL` |
 
 **Convenciones:** igual que el PRD del frontend.
 - Prioridad MoSCoW (Must, Should, Could, Won't).
@@ -207,7 +208,8 @@ Sin backend, la clave de Stability tendría que ir dentro de la app y cualquiera
   - **A1 — Header ausente o inválido** → `400 INVALID_INSTALLATION_ID`.
   - **A2 — Imagen inválida** → `400 INVALID_IMAGE` / `413 IMAGE_TOO_LARGE` / `415 UNSUPPORTED_MEDIA_TYPE`. No se reserva cuota.
   - **A3 — Sin permiso de concurrencia** → `503 SERVICE_BUSY` + `Retry-After`.
-  - **A4 — Cuota de instalación o IP agotada** → `429 QUOTA_EXCEEDED` + `Retry-After` + headers de cuota.
+  - **A4 — Créditos de la instalación insuficientes** → `402 INSUFFICIENT_CREDITS` + headers de cuota, sin `Retry-After` (los créditos no se renuevan solos).
+  - **A4b — Cuota diaria de la IP agotada** → `429 QUOTA_EXCEEDED` + `Retry-After` + headers de cuota.
   - **A5 — Límite global diario agotado** → `503 SERVICE_UNAVAILABLE` (sin revelar detalles del presupuesto).
   - **A6 — El proveedor rechaza la imagen** (4xx del proveedor, por ejemplo, moderación) → **liberar** la reserva → `422 PROVIDER_REJECTED`.
   - **A7 — Error 5xx del proveedor o respuesta no-GLB** → **liberar** → `502 PROVIDER_ERROR`.
@@ -267,7 +269,7 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RF-BE-012 | Llamar a SF3D con `texture_resolution`, `foreground_ratio` y `remesh` configurables (por defecto `1024`, `0.85`, `none`) | Must |
 | RF-BE-013 | Verificar que la respuesta del proveedor empiece con el magic de GLB (`glTF`) y no exceda un tamaño máximo configurable (por defecto 20 MB, `tunai.generation.max-model-bytes`). Aplica también al adaptador `fake` | Must |
 | RF-BE-014 | Traducir los errores del proveedor a los códigos propios (sección 15.4) | Must |
-| RF-BE-015 | Devolver los headers `X-Quota-Limit`, `X-Quota-Remaining` y `X-Quota-Reset` en respuestas de generación y cuota, y `Retry-After` en `429` y `503`. Los headers `X-Quota-*` reflejan **el límite más restrictivo entre instalación e IP**, para que un `429` nunca llegue con `remaining > 0`; el límite global **no** se expone, para no revelar el presupuesto (A5). `X-Quota-Reset` va en ISO-8601 UTC. `Retry-After` va en segundos: hasta las 00:00 de la zona configurada en `429` y en `503` por límite global; 5 s en `503 SERVICE_BUSY` | Must |
+| RF-BE-015 | Devolver los headers `X-Quota-Limit`, `X-Quota-Remaining`, `X-Quota-Reset`, `X-Credits-Balance` y `X-Credits-Per-Model` en respuestas de generación y cuota (y en `402` y `429`), y `Retry-After` en `429` y `503`. `X-Quota-Limit` y `X-Quota-Remaining` cuentan modelos y reflejan **el límite más restrictivo entre los créditos de la instalación y la IP**, para que un `429` nunca llegue con `remaining > 0`; el límite global **no** se expone, para no revelar el presupuesto (A5). `X-Quota-Reset` va en ISO-8601 UTC. `Retry-After` va en segundos: hasta las 00:00 de la zona configurada en `429` y en `503` por límite global; 5 s en `503 SERVICE_BUSY` | Must |
 | RF-BE-016 | Responder todos los errores como `application/problem+json` (RFC 9457) con las propiedades `code` y `traceId` | Must |
 | RF-BE-017 | Calcular el reinicio diario de la cuota a las 00:00 de la zona horaria configurada (por defecto `America/Bogota`) | Must |
 | RF-BE-018 | No escribir imágenes ni modelos en disco; procesarlos solo en memoria. Por defecto Tomcat guarda los archivos multipart en disco temporal: se configura `spring.servlet.multipart.file-size-threshold` igual a `max-file-size` para que queden en memoria (cuenta contra RNF-BE-003) | Must |
@@ -307,7 +309,7 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 
 | ID | Regla |
 |---|---|
-| RN-02 | Máximo **2 generaciones exitosas por día por instalación**; el día se reinicia a las 00:00 en `America/Bogota` (configurable) |
+| RN-02 | **Créditos por instalación:** cada instalación recibe **45 créditos** una sola vez y cada generación exitosa descuenta **15** (3 modelos). No se renuevan. Al no alcanzar para otro modelo, el cliente ofrece los planes de precios. Ambos valores son configurables. Como la cuota vive en memoria (RN-14), el cliente recuerda el último saldo y nunca muestra más del que ya conocía |
 | RN-03 | Las generaciones fallidas (rechazo, error, tiempo agotado del proveedor) **no consumen cuota** |
 | RN-04 | Solo JPEG y PNG, ≤ 10 MB, lado menor ≥ 512 px |
 | RN-10 | Máximo **2 generaciones exitosas por día por IP**, para acotar IDs de instalación inventados |
@@ -456,7 +458,7 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
 
 ### 13.8 Cuota en modo `fake`
 - La cuota se aplica igual con el proveedor `fake`, para poder probar `429` y los headers.
-- Como los límites por defecto (2) frenarían el desarrollo, en local y en las pruebas de integración con el frontend se suben por variables de entorno (por ejemplo, `TUNAI_QUOTA_*=50`).
+- Como los límites por defecto (2) frenarían el desarrollo, en local y en las pruebas de integración con el frontend se suben por variables de entorno (por ejemplo, `TUNAI_QUOTA_PER_IP=50` y `TUNAI_QUOTA_GLOBAL_DAILY=50`). Los créditos por instalación (45, 15 por modelo) se dejan igual que en la demo.
 - Al arrancar, el backend registra en el log el proveedor activo y los límites efectivos. Si el proveedor es `stability` y el límite global es mayor que 2, lo registra como advertencia (WARN).
 - Volver los límites a 2 forma parte del checklist del ensayo (Anexo E).
 
@@ -508,14 +510,15 @@ El campo `type` es una URN estable (`urn:tunai:problem:<code-en-minúsculas-con-
 **`GET /api/v1/quota`**
 - Respuesta `200`:
 ```json
-{ "limit": 2, "remaining": 1, "resetsAt": "2026-10-04T05:00:00Z" }
+{ "limit": 3, "remaining": 2, "resetsAt": "2026-10-04T05:00:00Z", "credits": 30, "creditsPerModel": 15 }
 ```
-- Headers: `X-Quota-Limit`, `X-Quota-Remaining`, `X-Quota-Reset`.
+- `limit` y `remaining` cuentan modelos; `credits` es el saldo de la instalación y `creditsPerModel` el costo de cada modelo. `resetsAt` es el reinicio de los límites diarios (IP y global); los créditos no se reinician.
+- Headers: `X-Quota-Limit`, `X-Quota-Remaining`, `X-Quota-Reset`, `X-Credits-Balance`, `X-Credits-Per-Model`.
 - Errores: `400 INVALID_INSTALLATION_ID`.
 
 **`POST /api/v1/generations`**
 - Request: `multipart/form-data`, campo `image` (JPEG o PNG).
-- Respuesta `200`: `Content-Type: model/gltf-binary`, cuerpo GLB, headers `X-Quota-*`.
+- Respuesta `200`: `Content-Type: model/gltf-binary`, cuerpo GLB, headers `X-Quota-*` y `X-Credits-*`.
 - Ejemplo:
 ```bash
 curl -X POST https://tunai-api-qd5x.onrender.com/api/v1/generations \
@@ -537,7 +540,8 @@ Ver `PRD-TunAI-Frontend.md` §15 y `HANDOFF-Frontend-UI.md`. Cliente: `java.net.
 | 413 | `IMAGE_TOO_LARGE` | > 10 MB. Incluye el `MaxUploadSizeExceededException` que lanza Spring antes de llegar al controlador | No |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Imagen reconocible pero de un formato no soportado (WEBP, HEIC, GIF, BMP), detectado por su firma de bytes | No |
 | 422 | `PROVIDER_REJECTED` | El proveedor rechazó la imagen | No |
-| 429 | `QUOTA_EXCEEDED` | Cuota por instalación o por IP agotada (+ `Retry-After`) | — |
+| 402 | `INSUFFICIENT_CREDITS` | La instalación no tiene créditos para otro modelo (sin `Retry-After`) | — |
+| 429 | `QUOTA_EXCEEDED` | Cuota diaria por IP agotada (+ `Retry-After`) | — |
 | 502 | `PROVIDER_ERROR` | Error 5xx del proveedor o respuesta no-GLB | No |
 | 503 | `SERVICE_BUSY` | Sin cupo de concurrencia (+ `Retry-After`) | No |
 | 503 | `SERVICE_UNAVAILABLE` | Límite global, proveedor sin créditos o con clave inválida | No |
@@ -705,7 +709,7 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 |---|---|
 | CA-BE-01 | Una foto JPEG o PNG válida produce `200` con un GLB que el cliente carga correctamente |
 | CA-BE-02 | Imágenes inválidas producen `400`, `413` o `415` sin llamar al proveedor ni consumir cuota |
-| CA-BE-03 | La tercera generación exitosa del día de una instalación produce `429 QUOTA_EXCEEDED` con `Retry-After`; la cuota se reinicia a las 00:00 de America/Bogota |
+| CA-BE-03 | Con los valores por defecto (45 créditos, 15 por modelo), la cuarta generación de una instalación produce `402 INSUFFICIENT_CREDITS` sin `Retry-After`; los créditos no se reinician a las 00:00 |
 | CA-BE-04 | Los límites por IP, globales y de concurrencia se aplican según la configuración |
 | CA-BE-05 | La clave de Stability no aparece en el repositorio, ni en los logs, ni en las respuestas |
 | CA-BE-06 | Todos los errores son `application/problem+json` con `code` del catálogo §15.4 y sin stack traces |
@@ -740,7 +744,8 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 | `TUNAI_TRIPO_READ_TIMEOUT` | `tunai.tripo.read-timeout` | `30s` | No (por petición) |
 | `TUNAI_TRIPO_POLL_INTERVAL` | `tunai.tripo.poll-interval` | `2s` | No |
 | `TUNAI_TRIPO_MAX_WAIT` | `tunai.tripo.max-wait` | `85s` | No (debe caber en los ~100 s del proxy) |
-| `TUNAI_QUOTA_PER_INSTALLATION` | `tunai.quota.per-installation` | `2` | No |
+| `TUNAI_CREDITS_INITIAL` | `tunai.quota.initial-credits` | `45` | No |
+| `TUNAI_CREDITS_PER_MODEL` | `tunai.quota.credits-per-model` | `15` | No |
 | `TUNAI_QUOTA_PER_IP` | `tunai.quota.per-ip` | `2` | No |
 | `TUNAI_QUOTA_GLOBAL_DAILY` | `tunai.quota.global-daily` | `2` | No |
 | `TUNAI_QUOTA_TIMEZONE` | `tunai.quota.timezone` | `America/Bogota` | No |
@@ -813,7 +818,7 @@ ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 
 **Ensayo (1 crédito, unos días antes del 9 de noviembre):**
 1. Verificar en el panel de Stability que el saldo sea 25 créditos y que el endpoint y el precio de SF3D no hayan cambiado (P-BE-04, supuesto 6).
-2. En Render → *Environment*: `STABILITY_API_KEY` configurada (a mano), `TUNAI_GENERATOR_PROVIDER=stability`, `TUNAI_QUOTA_PER_INSTALLATION=2`, `TUNAI_QUOTA_PER_IP=2`, `TUNAI_QUOTA_GLOBAL_DAILY=2`.
+2. En Render → *Environment*: `STABILITY_API_KEY` configurada (a mano), `TUNAI_GENERATOR_PROVIDER=stability`, `TUNAI_QUOTA_PER_IP=2`, `TUNAI_QUOTA_GLOBAL_DAILY=2`.
 3. Esperar el redespliegue y confirmar en el log de arranque el proveedor `stability` y los límites en 2.
 4. Desde la app instalada: despertar el servidor, elegir una foto que pase el clasificador y generar.
 5. Medir la latencia, guardar el GLB como respaldo y revisar el recoloreado.

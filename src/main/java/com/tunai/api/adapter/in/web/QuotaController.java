@@ -29,12 +29,19 @@ public class QuotaController {
         return ResponseEntity.ok().headers(headers).body(QuotaResponse.of(status));
     }
 
-    /** Contrato §15.2: {@code { "limit": 2, "remaining": 1, "resetsAt": "2026-10-04T05:00:00Z" }}. */
-    public record QuotaResponse(int limit, int remaining, String resetsAt) {
+    /**
+     * Contrato §15.2: {@code { "limit": 3, "remaining": 2, "resetsAt": "2026-10-04T05:00:00Z", "credits": 30,
+     * "creditsPerModel": 15 }}.
+     */
+    public record QuotaResponse(int limit, int remaining, String resetsAt, int credits, int creditsPerModel) {
 
         static QuotaResponse of(QuotaStatus status) {
             return new QuotaResponse(
-                    status.limit(), status.remaining(), status.resetsAt().toString());
+                    status.limit(),
+                    status.remaining(),
+                    status.resetsAt().toString(),
+                    status.credits(),
+                    status.creditsPerModel());
         }
     }
 }

@@ -1,10 +1,10 @@
 package com.tunai.api.adapter.out.quota;
 
 /**
- * Generaciones confirmadas y reservadas (en curso) de una clave en el día actual. No es thread-safe: lo protege el lock
- * de {@link InMemoryQuotaStore}.
+ * Generaciones confirmadas y reservadas (en curso) de una clave: los modelos de una instalación o los del día de una IP
+ * o del total. No es thread-safe: lo protege el lock de {@link InMemoryQuotaStore}.
  */
-final class DailyCounter {
+final class UsageCounter {
 
     private int committed;
     private int reserved;

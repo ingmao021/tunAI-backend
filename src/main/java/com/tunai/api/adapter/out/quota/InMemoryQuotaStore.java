@@ -2,6 +2,7 @@ package com.tunai.api.adapter.out.quota;
 
 import com.tunai.api.application.port.out.QuotaStorePort;
 import com.tunai.api.domain.exception.GlobalLimitReachedException;
+import com.tunai.api.domain.exception.InsufficientCreditsException;
 import com.tunai.api.domain.exception.QuotaExceededException;
 import com.tunai.api.domain.model.ClientIp;
 import com.tunai.api.domain.model.InstallationId;
@@ -19,12 +20,13 @@ import java.util.UUID;
 
 /**
  * Cuota en memoria (§13.6). Todas las operaciones toman un único lock: la reserva debe ser atómica sobre tres
- * contadores (instalación, IP y global) y el tráfico es mínimo (concurrencia ≤ 2), así que un lock global es más simple
- * y seguro que operaciones atómicas por clave.
+ * contadores (créditos de la instalación, IP y global) y el tráfico es mínimo (concurrencia ≤ 2), así que un lock
+ * global es más simple y seguro que operaciones atómicas por clave.
  *
- * <p>Al cambiar el día (00:00 en la zona configurada) se descartan todos los contadores y reservas pendientes; una
- * reserva del día anterior que se confirme o libere después no afecta el día nuevo. Un reinicio del proceso vacía la
- * cuota (limitación aceptada, RN-14).
+ * <p>Los créditos de cada instalación no se reinician. Los contadores de IP y global sí: al cambiar el día (00:00 en
+ * la zona configurada) se descartan, y una reserva del día anterior que se confirme o libere después solo afecta a los
+ * créditos de su instalación. Un reinicio del proceso vacía todo (limitación aceptada, RN-14): el cliente recuerda el
+ * último saldo y no muestra más créditos de los que ya conocía.
  */
 public final class InMemoryQuotaStore implements QuotaStorePort {
 
@@ -33,7 +35,8 @@ public final class InMemoryQuotaStore implements QuotaStorePort {
     private final QuotaLimits limits;
     private final Clock clock;
     private final Object lock = new Object();
-    private final Map<String, DailyCounter> counters = new HashMap<>();
+    private final Map<InstallationId, UsageCounter> installations = new HashMap<>();
+    private final Map<String, UsageCounter> daily = new HashMap<>();
     private final Map<UUID, QuotaReservation> pending = new HashMap<>();
     private LocalDate currentDay;
 
@@ -49,25 +52,24 @@ public final class InMemoryQuotaStore implements QuotaStorePort {
         synchronized (lock) {
             Instant now = clock.instant();
             rollDayIfNeeded(now);
-            Duration untilReset = Duration.between(now, limits.nextReset(now));
-            if (counter(installationKey(installationId)).used() >= limits.perInstallation()) {
-                throw new QuotaExceededException(
-                        "Se alcanzó el máximo de " + limits.perInstallation() + " generaciones por día",
-                        statusOf(installationId, clientIp, now),
-                        untilReset);
+            if (credits(installationId) < limits.creditsPerModel()) {
+                throw new InsufficientCreditsException(
+                        "Créditos insuficientes: cada modelo usa " + limits.creditsPerModel(),
+                        statusOf(installationId, clientIp, now));
             }
-            if (counter(ipKey(clientIp)).used() >= limits.perIp()) {
+            Duration untilReset = Duration.between(now, limits.nextReset(now));
+            if (dailyUsed(ipKey(clientIp)) >= limits.perIp()) {
                 throw new QuotaExceededException(
                         "Se alcanzó el máximo de generaciones por día desde esta red",
                         statusOf(installationId, clientIp, now),
                         untilReset);
             }
-            if (counter(GLOBAL_KEY).used() >= limits.globalDaily()) {
+            if (dailyUsed(GLOBAL_KEY) >= limits.globalDaily()) {
                 throw new GlobalLimitReachedException("Límite global diario alcanzado", untilReset);
             }
-            for (String key : keys(installationId, clientIp)) {
-                counter(key).reserve();
-            }
+            installation(installationId).reserve();
+            dailyCounter(ipKey(clientIp)).reserve();
+            dailyCounter(GLOBAL_KEY).reserve();
             QuotaReservation reservation =
                     new QuotaReservation(UUID.randomUUID(), installationId, clientIp, currentDay);
             pending.put(reservation.id(), reservation);
@@ -82,8 +84,10 @@ public final class InMemoryQuotaStore implements QuotaStorePort {
             Instant now = clock.instant();
             rollDayIfNeeded(now);
             if (pending.remove(reservation.id()) != null) {
-                for (String key : keys(reservation.installationId(), reservation.clientIp())) {
-                    counter(key).commit();
+                installation(reservation.installationId()).commit();
+                if (reservation.day().equals(currentDay)) {
+                    dailyCounter(ipKey(reservation.clientIp())).commit();
+                    dailyCounter(GLOBAL_KEY).commit();
                 }
             }
             return statusOf(reservation.installationId(), reservation.clientIp(), now);
@@ -96,8 +100,10 @@ public final class InMemoryQuotaStore implements QuotaStorePort {
         synchronized (lock) {
             rollDayIfNeeded(clock.instant());
             if (pending.remove(reservation.id()) != null) {
-                for (String key : keys(reservation.installationId(), reservation.clientIp())) {
-                    counter(key).release();
+                installation(reservation.installationId()).release();
+                if (reservation.day().equals(currentDay)) {
+                    dailyCounter(ipKey(reservation.clientIp())).release();
+                    dailyCounter(GLOBAL_KEY).release();
                 }
             }
         }
@@ -114,41 +120,48 @@ public final class InMemoryQuotaStore implements QuotaStorePort {
         }
     }
 
-    /** El más restrictivo entre instalación e IP; ante empate se informa el de la instalación (RF-BE-015). */
+    /** El más restrictivo entre créditos e IP; ante empate se informa el de la instalación (RF-BE-015). */
     private QuotaStatus statusOf(InstallationId installationId, ClientIp clientIp, Instant now) {
-        int installationRemaining = remaining(limits.perInstallation(), installationKey(installationId));
-        int ipRemaining = remaining(limits.perIp(), ipKey(clientIp));
+        int credits = credits(installationId);
+        int installationRemaining = credits / limits.creditsPerModel();
+        int ipRemaining = Math.max(0, limits.perIp() - dailyUsed(ipKey(clientIp)));
         Instant resetsAt = limits.nextReset(now);
         return ipRemaining < installationRemaining
-                ? new QuotaStatus(limits.perIp(), ipRemaining, resetsAt)
-                : new QuotaStatus(limits.perInstallation(), installationRemaining, resetsAt);
+                ? new QuotaStatus(limits.perIp(), ipRemaining, resetsAt, credits, limits.creditsPerModel())
+                : new QuotaStatus(
+                        limits.modelsPerInstallation(),
+                        installationRemaining,
+                        resetsAt,
+                        credits,
+                        limits.creditsPerModel());
     }
 
-    private int remaining(int limit, String key) {
-        DailyCounter counter = counters.get(key);
+    /** Saldo de la instalación; las reservas en curso ya están descontadas. */
+    private int credits(InstallationId installationId) {
+        UsageCounter counter = installations.get(installationId);
         int used = counter == null ? 0 : counter.used();
-        return Math.max(0, limit - used);
+        return Math.max(0, limits.initialCredits() - used * limits.creditsPerModel());
+    }
+
+    private int dailyUsed(String key) {
+        UsageCounter counter = daily.get(key);
+        return counter == null ? 0 : counter.used();
     }
 
     private void rollDayIfNeeded(Instant now) {
         LocalDate today = limits.dayOf(now);
         if (!today.equals(currentDay)) {
-            counters.clear();
-            pending.clear();
+            daily.clear();
             currentDay = today;
         }
     }
 
-    private DailyCounter counter(String key) {
-        return counters.computeIfAbsent(key, k -> new DailyCounter());
+    private UsageCounter installation(InstallationId installationId) {
+        return installations.computeIfAbsent(installationId, k -> new UsageCounter());
     }
 
-    private static String[] keys(InstallationId installationId, ClientIp clientIp) {
-        return new String[] {installationKey(installationId), ipKey(clientIp), GLOBAL_KEY};
-    }
-
-    private static String installationKey(InstallationId installationId) {
-        return "installation:" + installationId.value();
+    private UsageCounter dailyCounter(String key) {
+        return daily.computeIfAbsent(key, k -> new UsageCounter());
     }
 
     private static String ipKey(ClientIp clientIp) {

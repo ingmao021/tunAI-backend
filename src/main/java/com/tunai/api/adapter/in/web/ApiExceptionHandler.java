@@ -3,6 +3,7 @@ package com.tunai.api.adapter.in.web;
 import com.tunai.api.domain.exception.DomainException;
 import com.tunai.api.domain.exception.GlobalLimitReachedException;
 import com.tunai.api.domain.exception.ImageTooLargeException;
+import com.tunai.api.domain.exception.InsufficientCreditsException;
 import com.tunai.api.domain.exception.InvalidImageException;
 import com.tunai.api.domain.exception.InvalidInstallationIdException;
 import com.tunai.api.domain.exception.ProviderFailureException;
@@ -12,6 +13,7 @@ import com.tunai.api.domain.exception.ProviderUnavailableException;
 import com.tunai.api.domain.exception.QuotaExceededException;
 import com.tunai.api.domain.exception.ServiceBusyException;
 import com.tunai.api.domain.exception.UnsupportedImageFormatException;
+import com.tunai.api.domain.model.QuotaStatus;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
@@ -48,6 +50,7 @@ public class ApiExceptionHandler {
             Map.entry(ImageTooLargeException.class, ErrorCode.IMAGE_TOO_LARGE),
             Map.entry(UnsupportedImageFormatException.class, ErrorCode.UNSUPPORTED_MEDIA_TYPE),
             Map.entry(ProviderRejectedException.class, ErrorCode.PROVIDER_REJECTED),
+            Map.entry(InsufficientCreditsException.class, ErrorCode.INSUFFICIENT_CREDITS),
             Map.entry(QuotaExceededException.class, ErrorCode.QUOTA_EXCEEDED),
             Map.entry(ProviderFailureException.class, ErrorCode.PROVIDER_ERROR),
             Map.entry(ServiceBusyException.class, ErrorCode.SERVICE_BUSY),
@@ -69,11 +72,14 @@ public class ApiExceptionHandler {
         String detail = PUBLIC_DETAILS.getOrDefault(e.getClass(), e.getMessage());
         logDomain(code, e);
         ResponseEntity<ProblemDetail> response = problem(code, detail, e.retryAfter());
-        if (e instanceof QuotaExceededException quotaExceeded) {
-            // A4: el 429 lleva los headers de cuota además de Retry-After
+        QuotaStatus status = e instanceof QuotaExceededException quotaExceeded
+                ? quotaExceeded.status()
+                : e instanceof InsufficientCreditsException noCredits ? noCredits.status() : null;
+        if (status != null) {
+            // A4: el 429 y el 402 llevan los headers de cuota (y el 429, además, Retry-After)
             HttpHeaders headers = new HttpHeaders();
             headers.putAll(response.getHeaders());
-            QuotaHeaders.write(headers, quotaExceeded.status());
+            QuotaHeaders.write(headers, status);
             return new ResponseEntity<>(response.getBody(), headers, response.getStatusCode());
         }
         return response;

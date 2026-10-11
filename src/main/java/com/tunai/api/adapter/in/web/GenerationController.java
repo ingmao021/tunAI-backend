@@ -48,12 +48,13 @@ public class GenerationController {
 
         // RNF-BE-009: sin imagen ni modelo; IP enmascarada e instalación como hash
         log.info(
-                "Generación exitosa: instalación {}, IP {}, {} bytes, cuota restante {}/{}",
+                "Generación exitosa: instalación {}, IP {}, {} bytes, cuota restante {}/{}, créditos {}",
                 installationId.hashForLogs(),
                 clientIp.masked(),
                 result.model().sizeInBytes(),
                 result.quota().remaining(),
-                result.quota().limit());
+                result.quota().limit(),
+                result.quota().credits());
 
         response.setStatus(HttpStatus.OK.value());
         response.setContentType(GLB_MEDIA_TYPE);

@@ -5,7 +5,7 @@ import java.time.Duration;
 import java.util.Objects;
 
 /**
- * Cuota diaria por instalación o por IP agotada (RN-02, RN-10). Se traduce a {@code 429 QUOTA_EXCEEDED} con los headers
+ * Cuota diaria por IP agotada (RN-10). Se traduce a {@code 429 QUOTA_EXCEEDED} con los headers
  * de cuota (flujo A4).
  */
 public class QuotaExceededException extends DomainException {

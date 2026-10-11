@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.tunai.api.domain.exception.DomainException;
 import com.tunai.api.domain.exception.GlobalLimitReachedException;
 import com.tunai.api.domain.exception.ImageTooLargeException;
+import com.tunai.api.domain.exception.InsufficientCreditsException;
 import com.tunai.api.domain.exception.InvalidImageException;
 import com.tunai.api.domain.exception.InvalidInstallationIdException;
 import com.tunai.api.domain.exception.ProviderFailureException;
@@ -34,7 +35,7 @@ import org.springframework.web.bind.annotation.RestController;
 class ApiExceptionHandlerTest {
 
     private static final ThreadLocal<Supplier<? extends Exception>> TO_THROW = new ThreadLocal<>();
-    private static final QuotaStatus EXHAUSTED = new QuotaStatus(2, 0, Instant.parse("2026-10-10T05:00:00Z"));
+    private static final QuotaStatus EXHAUSTED = new QuotaStatus(3, 0, Instant.parse("2026-10-10T05:00:00Z"), 0, 15);
 
     private final MockMvcTester mvc = MockMvcTester.create(MockMvcBuilders.standaloneSetup(new ThrowingController())
             .setControllerAdvice(new ApiExceptionHandler())
@@ -73,6 +74,11 @@ class ApiExceptionHandlerTest {
                         (Supplier<DomainException>) () -> new ProviderRejectedException("x"),
                         422,
                         "PROVIDER_REJECTED",
+                        none),
+                Arguments.of(
+                        (Supplier<DomainException>) () -> new InsufficientCreditsException("x", EXHAUSTED),
+                        402,
+                        "INSUFFICIENT_CREDITS",
                         none),
                 Arguments.of(
                         (Supplier<DomainException>)
@@ -135,8 +141,10 @@ class ApiExceptionHandlerTest {
 
         assertThat(result)
                 .headers()
-                .hasValue("X-Quota-Limit", 2)
+                .hasValue("X-Quota-Limit", 3)
                 .hasValue("X-Quota-Remaining", 0)
+                .hasValue("X-Credits-Balance", 0)
+                .hasValue("X-Credits-Per-Model", 15)
                 .hasValue("X-Quota-Reset", "2026-10-10T05:00:00Z")
                 .hasValue("Retry-After", 5400);
     }

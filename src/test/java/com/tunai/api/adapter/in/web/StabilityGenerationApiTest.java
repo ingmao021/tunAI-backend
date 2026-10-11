@@ -31,7 +31,7 @@ import org.springframework.test.web.servlet.assertj.MvcTestResult;
             "tunai.generator.provider=stability",
             "tunai.stability.api-key=sk-test-e2e",
             "tunai.stability.read-timeout=2s",
-            "tunai.quota.per-installation=1",
+            "tunai.quota.initial-credits=15",
             "tunai.quota.per-ip=1000",
             "tunai.quota.global-daily=1000"
         })
