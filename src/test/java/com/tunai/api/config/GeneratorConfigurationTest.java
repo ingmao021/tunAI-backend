@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.tunai.api.adapter.out.fake.FakeModelGenerator;
 import com.tunai.api.adapter.out.stability.StabilityFast3dAdapter;
+import com.tunai.api.adapter.out.tripo.TripoAdapter;
+import com.tunai.api.adapter.out.tripo.TripoOptions;
 import com.tunai.api.application.port.out.ModelGeneratorPort;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -49,6 +51,36 @@ class GeneratorConfigurationTest {
     }
 
     @Test
+    void usesTripoWhenConfiguredWithAKey() {
+        runner.withPropertyValues("tunai.generator.provider=tripo", "tunai.tripo.api-key=" + KEY)
+                .run(context ->
+                        assertThat(context).getBean(ModelGeneratorPort.class).isInstanceOf(TripoAdapter.class));
+    }
+
+    /** RNF-BE-015: sin clave no arranca, y el mensaje no expone ningún secreto. */
+    @Test
+    void refusesToStartWithTripoWithoutAKey() {
+        runner.withPropertyValues("tunai.generator.provider=tripo")
+                .run(context ->
+                        assertThat(context).hasFailed().getFailure().rootCause().hasMessageContaining("TRIPO_API_KEY"));
+    }
+
+    /** Sin límite de caras o fuera de rango, el GLB podría superar el máximo o ser rechazado por Tripo. */
+    @Test
+    void refusesToStartWithAnInvalidTripoFaceLimit() {
+        runner.withPropertyValues(
+                        "tunai.generator.provider=tripo", "tunai.tripo.api-key=" + KEY, "tunai.tripo.face-limit=100")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void tripoTextureQualityAcceptsLowercase() {
+        runner.withPropertyValues("tunai.tripo.texture-quality=detailed").run(context -> assertThat(
+                        context.getBean(TripoProperties.class).options().textureQuality())
+                .isEqualTo(TripoOptions.TextureQuality.DETAILED));
+    }
+
+    @Test
     void failsToStartWhenTheSampleIsMissing() {
         runner.withPropertyValues("tunai.generator.fake.sample-location=fake/does-not-exist.glb")
                 .run(context -> assertThat(context).hasFailed());
@@ -59,6 +91,15 @@ class GeneratorConfigurationTest {
     void stabilityPropertiesNeverPrintTheKey() {
         runner.withPropertyValues("tunai.stability.api-key=" + KEY).run(context -> {
             StabilityProperties properties = context.getBean(StabilityProperties.class);
+
+            assertThat(properties.toString()).doesNotContain(KEY).contains("apiKey=****");
+        });
+    }
+
+    @Test
+    void tripoPropertiesNeverPrintTheKey() {
+        runner.withPropertyValues("tunai.tripo.api-key=" + KEY).run(context -> {
+            TripoProperties properties = context.getBean(TripoProperties.class);
 
             assertThat(properties.toString()).doesNotContain(KEY).contains("apiKey=****");
         });

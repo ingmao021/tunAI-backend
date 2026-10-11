@@ -2,6 +2,7 @@ package com.tunai.api.config;
 
 import com.tunai.api.adapter.out.fake.FakeModelGenerator;
 import com.tunai.api.adapter.out.stability.StabilityFast3dAdapter;
+import com.tunai.api.adapter.out.tripo.TripoAdapter;
 import com.tunai.api.application.port.out.ModelGeneratorPort;
 import java.io.IOException;
 import java.io.InputStream;
@@ -15,18 +16,27 @@ import org.springframework.core.io.ClassPathResource;
 
 /** Ensambla el {@link ModelGeneratorPort} según {@code tunai.generator.provider} (RF-BE-021). */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties({GeneratorProperties.class, StabilityProperties.class, GenerationProperties.class})
+@EnableConfigurationProperties({
+    GeneratorProperties.class,
+    StabilityProperties.class,
+    TripoProperties.class,
+    GenerationProperties.class
+})
 public class GeneratorConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(GeneratorConfiguration.class);
 
     @Bean
     ModelGeneratorPort modelGenerator(
-            GeneratorProperties generator, StabilityProperties stability, GenerationProperties generation) {
+            GeneratorProperties generator,
+            StabilityProperties stability,
+            TripoProperties tripo,
+            GenerationProperties generation) {
         log.info("Proveedor de generación 3D activo: {}", generator.provider());
         return switch (generator.provider()) {
             case FAKE -> fakeModelGenerator(generator.fake());
             case STABILITY -> stabilityModelGenerator(stability, generation);
+            case TRIPO -> tripoModelGenerator(tripo, generation);
         };
     }
 
@@ -61,6 +71,32 @@ public class GeneratorConfiguration {
                 stability.readTimeout(),
                 generation.maxModelBytes().toBytes(),
                 stability.vertexCount());
+    }
+
+    /** RNF-BE-015: con el proveedor real, la app no arranca si falta la clave. */
+    private static ModelGeneratorPort tripoModelGenerator(TripoProperties tripo, GenerationProperties generation) {
+        if (!tripo.hasApiKey()) {
+            throw new IllegalStateException("El proveedor 'tripo' requiere la variable de entorno TRIPO_API_KEY");
+        }
+        log.warn(
+                "Generador TRIPO: cada generación exitosa gasta créditos reales. Endpoint {}, modelo {}, {} caras,"
+                        + " textura {}, PBR {}, consulta cada {} hasta {}",
+                tripo.baseUrl(),
+                tripo.model(),
+                tripo.faceLimit(),
+                tripo.textureQuality(),
+                tripo.pbr(),
+                tripo.pollInterval(),
+                tripo.maxWait());
+        return TripoAdapter.create(
+                tripo.baseUrl(),
+                tripo.apiKey(),
+                tripo.connectTimeout(),
+                tripo.readTimeout(),
+                tripo.options(),
+                tripo.pollInterval(),
+                tripo.maxWait(),
+                generation.maxModelBytes().toBytes());
     }
 
     private static byte[] readClasspath(String location) {

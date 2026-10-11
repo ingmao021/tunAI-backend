@@ -23,7 +23,8 @@ management:
       probes:
         enabled: false
 
-# Anexo A. El proveedor por defecto es "fake": una llamada real solo ocurre si se configura "stability" (RF-BE-021)
+# Anexo A. El proveedor por defecto es "fake": una llamada real solo ocurre si se configura "stability" o "tripo"
+# (RF-BE-021)
 tunai:
   generator:
     provider: ${TUNAI_GENERATOR_PROVIDER:fake}
@@ -39,6 +40,18 @@ tunai:
     vertex-count: ${TUNAI_VERTEX_COUNT:-1}
     connect-timeout: ${TUNAI_STABILITY_CONNECT_TIMEOUT:10s}
     read-timeout: ${TUNAI_STABILITY_READ_TIMEOUT:60s}
+  # §13.9. La clave nunca va en este archivo: solo en la variable de entorno TRIPO_API_KEY (RNF-BE-006)
+  tripo:
+    api-key: ${TRIPO_API_KEY:}
+    base-url: ${TUNAI_TRIPO_BASE_URL:https://openapi.tripo3d.ai/v3}
+    model: ${TUNAI_TRIPO_MODEL:v3.1-20260211}
+    face-limit: ${TUNAI_TRIPO_FACE_LIMIT:50000}
+    texture-quality: ${TUNAI_TRIPO_TEXTURE_QUALITY:standard}
+    pbr: ${TUNAI_TRIPO_PBR:true}
+    connect-timeout: ${TUNAI_TRIPO_CONNECT_TIMEOUT:10s}
+    read-timeout: ${TUNAI_TRIPO_READ_TIMEOUT:30s}
+    poll-interval: ${TUNAI_TRIPO_POLL_INTERVAL:2s}
+    max-wait: ${TUNAI_TRIPO_MAX_WAIT:85s}
   generation:
     max-model-bytes: ${TUNAI_MAX_MODEL_BYTES:20MB}
     max-concurrent: ${TUNAI_MAX_CONCURRENT:2}

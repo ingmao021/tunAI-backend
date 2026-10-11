@@ -15,7 +15,8 @@ public record GeneratorProperties(
 
     public enum Provider {
         FAKE,
-        STABILITY
+        STABILITY,
+        TRIPO
     }
 
     /**
