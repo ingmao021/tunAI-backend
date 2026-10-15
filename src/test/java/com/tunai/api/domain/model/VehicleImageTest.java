@@ -17,12 +17,11 @@ class VehicleImageTest {
         assertThat(image.height()).isEqualTo(480);
     }
 
+    /** El constructor no copia (la foto puede pesar 10 MB), pero lo que se expone sí es una copia. */
     @Test
-    void isImmutable() {
-        byte[] source = {1, 2, 3};
-        VehicleImage image = new VehicleImage(source, ImageFormat.JPEG, 512, 512);
+    void theExposedBytesAreACopy() {
+        VehicleImage image = new VehicleImage(new byte[] {1, 2, 3}, ImageFormat.JPEG, 512, 512);
 
-        source[0] = 9;
         image.data()[1] = 9;
 
         assertThat(image.data()).containsExactly(1, 2, 3);
