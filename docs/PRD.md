@@ -4,7 +4,7 @@
 |---|---|
 | Producto | TunAI — visualización y personalización virtual de vehículos en 3D |
 | Componente | API intermediaria de generación 3D (repositorio **backend**) |
-| Versión del documento | 1.11 |
+| Versión del documento | 1.12 |
 | Fecha | 2026-10-15 (v1.0: 2026-10-03) |
 | Autor | Anderson |
 | Estado | Aprobado para MVP (con puntos **PENDIENTE DE DEFINIR / VALIDAR**) |
@@ -33,6 +33,7 @@
 | 1.9 | 2026-10-11 | Créditos por instalación (RN-02): 45 al instalar, 15 por modelo, sin renovación diaria. Sin créditos para otro modelo → `402 INSUFFICIENT_CREDITS` (sin `Retry-After`) y el cliente ofrece los planes. `GET /api/v1/quota` y los headers informan el saldo (`credits`, `creditsPerModel`, `X-Credits-Balance`, `X-Credits-Per-Model`). Los límites diarios por IP y global no cambian. `TUNAI_QUOTA_PER_INSTALLATION` se reemplaza por `TUNAI_CREDITS_INITIAL` y `TUNAI_CREDITS_PER_MODEL` |
 | 1.10 | 2026-10-14 | **Tripo es el único proveedor**: se eliminan los adaptadores `stability` y `fake`, `GenerationOptions` y `tunai.generator.*`; la app no arranca sin `TRIPO_API_KEY` (RNF-BE-015). Parámetros elegidos tras una prueba en Tripo Studio: textura `detailed` (4K) + PBR, geometría `standard`, 200.000 caras = 40 créditos por modelo (§2.1.1, §13.9). Nueva variable `TUNAI_TRIPO_GEOMETRY_QUALITY`; `max-model-bytes` sube a 50 MB. Los tests usan WireMock o un generador simulado (RN-15) |
 | 1.11 | 2026-10-15 | Protección del saldo de Tripo tras la revisión de huecos: consulta del saldo antes de cada generación (RF-BE-020, `TUNAI_TRIPO_MIN_BALANCE`); los fallos posteriores a crear la tarea mantienen el uso diario de IP y global (`releaseKeepingDailyUsage`, §13.5); reintentos de la consulta de la tarea y de la descarga; plazo duro de `max-wait` para toda la generación (§13.9); el GLB ya no se copia en memoria (RNF-BE-003) |
+| 1.12 | 2026-10-15 | Revisión de deuda técnica: el límite por IP agrupa IPv6 por su prefijo `/64` canónico (RN-10); limitación aceptada de la desconexión del cliente (§13.9); sin Lombok; la foto ya no se copia en `VehicleImage`; JaCoCo exige 90 % de líneas en dominio y aplicación y 85 % en adaptadores (Anexo D) |
 
 **Convenciones:** igual que el PRD del frontend.
 - Prioridad MoSCoW (Must, Should, Could, Won't).
@@ -317,7 +318,7 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RN-02 | **Créditos por instalación:** cada instalación recibe **45 créditos** una sola vez y cada generación exitosa descuenta **15** (3 modelos). No se renuevan. Al no alcanzar para otro modelo, el cliente ofrece los planes de precios. Ambos valores son configurables. Como la cuota vive en memoria (RN-14), el cliente recuerda el último saldo y nunca muestra más del que ya conocía |
 | RN-03 | Las generaciones fallidas (rechazo, error, tiempo agotado del proveedor) **no consumen cuota** |
 | RN-04 | Solo JPEG y PNG, ≤ 10 MB, lado menor ≥ 512 px |
-| RN-10 | Máximo **2 generaciones exitosas por día por IP**, para acotar IDs de instalación inventados |
+| RN-10 | Máximo **2 generaciones exitosas por día por IP**, para acotar IDs de instalación inventados. IPv4 cuenta por dirección; IPv6, por su prefijo `/64` en forma canónica (un cliente suele recibir todo un `/64` y podría rotar direcciones); una IPv4 mapeada en IPv6 cuenta como la IPv4 |
 | RN-11 | Máximo **2 generaciones exitosas por día en total**, igual al saldo de créditos gratuitos (2 generaciones) |
 | RN-12 | No se almacenan imágenes ni modelos en el servidor |
 | RN-13 | Nunca se reintenta automáticamente una llamada al proveedor (cada éxito tiene costo) |
@@ -458,6 +459,7 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
 - **Asíncrono a síncrono:** el endpoint `POST /api/v1/generations` sigue siendo síncrono. El adaptador consulta la tarea cada `poll-interval` (2 s). `max-wait` (85 s) es un **plazo duro de toda la generación**, del saldo a la descarga: corre en un hilo virtual que se cancela al vencer, así ninguna llamada lenta (con `read-timeout` de 30 s) alarga la espera más allá de los ~100 s del proxy de Render (Cloudflare) ni de los 120 s del cliente. Si Tripo tarda más, las opciones son un modelo más rápido (`TUNAI_TRIPO_MODEL`) o un contrato asíncrono con el cliente (P-BE-10).
 - **Sin reintentos de la creación (RN-13):** la tarea se crea una sola vez. Sí se reintentan los GET idempotentes: la consulta de la tarea ante fallos de red, 5xx o respuestas no-JSON (hasta 5 seguidos) y la descarga del GLB (1 reintento), porque abandonar una tarea no evita que Tripo la cobre.
 - **Fallos después de crear la tarea:** Tripo solo cobra las tareas que terminan en `success`; devuelve los créditos de `failed` y `cancelled`, y `banned` no se genera. Cualquier otro fallo posterior a la creación (tiempo agotado, consulta o descarga fallida, URL ausente, GLB inválido o demasiado grande, estado `expired`) puede haberse cobrado: la excepción lo marca (`providerMayHaveCharged`) y la cuota lo cuenta en los límites diarios de IP y global, aunque al usuario se le devuelven sus créditos. El `task_id` queda en el log (WARN).
+- **Limitación aceptada: desconexión del cliente.** Si la app se cierra o pierde la conexión a mitad de una generación, el backend no se entera hasta escribir la respuesta: la tarea sigue, Tripo la cobra, la cuota se confirma y el GLB se pierde. Cancelarla exigiría detectar el cierre del socket durante la espera, que Servlet no ofrece de forma confiable detrás del proxy; el costo queda acotado por la cuota diaria y el saldo (RF-BE-020).
 - **Parámetros fijos** (`TripoOptions`): `model` (`v3.1-20260211`), `face_limit` (200.000, para acotar el GLB y lo que dibuja el visor), `texture_quality` (`detailed`, 4K, +10 créditos), `geometry_quality` (`standard`; `detailed` = malla ultra, +20) y `pbr` (`true`). Total: 40 créditos por modelo, que el log confirma con `credits_consumed`. No se envían `quad` (fuerza FBX) ni `compress` (meshopt, que el visor no soporta).
 - **Respuesta:** se exige `code == 0` y `data`; el GLB se lee como máximo `max-model-bytes + 1` y se valida su magic (RF-BE-013).
 - **Mapeo de errores** (`TripoErrorTranslator`), primero por `code` y después por estado HTTP:
@@ -799,7 +801,7 @@ ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 ## Anexo D — Definición de terminado
 1. Tests en verde.
 2. ArchUnit en verde.
-3. Spotless y Checkstyle limpios.
+3. Spotless y Checkstyle limpios; cobertura de líneas de JaCoCo ≥ 90 % en dominio y aplicación y ≥ 85 % en adaptadores.
 4. Ningún secreto en el diff.
 5. Errores mapeados al catálogo.
 6. Requisito trazado (RF o US) en el PR.
