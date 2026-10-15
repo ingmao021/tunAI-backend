@@ -4,8 +4,8 @@
 |---|---|
 | Producto | TunAI — visualización y personalización virtual de vehículos en 3D |
 | Componente | API intermediaria de generación 3D (repositorio **backend**) |
-| Versión del documento | 1.8 |
-| Fecha | 2026-10-10 (v1.0: 2026-10-03) |
+| Versión del documento | 1.9 |
+| Fecha | 2026-10-14 (v1.0: 2026-10-03) |
 | Autor | Anderson |
 | Estado | Aprobado para MVP (con puntos **PENDIENTE DE DEFINIR / VALIDAR**) |
 | Documento relacionado | `PRD-TunAI-Frontend.md` (aplicación de escritorio JavaFX) |
@@ -14,8 +14,8 @@
 | Base de datos | **Ninguna** (decisión del producto) |
 | Paquete raíz | `com.tunai.api` |
 | Fecha de presentación | 9 de noviembre de 2026 |
-| Modelo de IA | Stable Fast 3D (Stability AI), consumido por API — referencia: https://github.com/Stability-AI/stable-fast-3d.git |
-| Presupuesto | **0 USD**: solo los 25 créditos gratuitos de una cuenta nueva de Stability (= **2 generaciones reales**) |
+| Modelo de IA | Tripo API v3 (`v3.1-20260211`), consumido por API (§2.1.1). Hasta v1.8: Stable Fast 3D de Stability AI |
+| Presupuesto | Recarga de **1 USD** en Tripo = 100 créditos (= **2 generaciones reales** de 40 créditos) (RN-17) |
 | Contexto de uso | Proyecto educativo; presentado únicamente por el autor |
 
 ### Historial de cambios
@@ -30,6 +30,7 @@
 | 1.6 | 2026-10-09 | Métricas `tunai.generations` y `tunai.provider.latency` publicadas en el log; Checkstyle en el build |
 | 1.7 | 2026-10-10 | El GLB del adaptador `fake` pasa a ser una salida real de Stable Fast 3D (código abierto, en local) con el mismo formato que la API; Car Concept tenía 97 mallas y el visor lo rechazaba, así que el flujo completo no se podía probar sin gastar créditos (RF-BE-021) |
 | 1.8 | 2026-10-10 | Ensayo real con SF3D superado (GLB de 877 KB aceptado por el visor), pero con calidad insuficiente para la demo. Nuevo proveedor principal **Tripo API v3** (§2.1.1, RF-BE-024, §13.9) con presupuesto mínimo de pago (RN-17); Stability queda como respaldo. Variables `TRIPO_API_KEY` y `TUNAI_TRIPO_*` (Anexo A), checklist de Tripo (Anexo E), riesgos R-BE-13 y R-BE-14, pregunta P-BE-10 |
+| 1.9 | 2026-10-14 | **Tripo es el único proveedor**: se eliminan los adaptadores `stability` y `fake`, `GenerationOptions` y `tunai.generator.*`; la app no arranca sin `TRIPO_API_KEY` (RNF-BE-015). Parámetros elegidos tras una prueba en Tripo Studio: textura `detailed` (4K) + PBR, geometría `standard`, 200.000 caras = 40 créditos por modelo (§2.1.1, §13.9). Nueva variable `TUNAI_TRIPO_GEOMETRY_QUALITY`; `max-model-bytes` sube a 50 MB. Los tests usan WireMock o un generador simulado (RN-15) |
 | 1.9 | 2026-10-11 | Créditos por instalación (RN-02): 45 al instalar, 15 por modelo, sin renovación diaria. Sin créditos para otro modelo → `402 INSUFFICIENT_CREDITS` (sin `Retry-After`) y el cliente ofrece los planes. `GET /api/v1/quota` y los headers informan el saldo (`credits`, `creditsPerModel`, `X-Credits-Balance`, `X-Credits-Per-Model`). Los límites diarios por IP y global no cambian. `TUNAI_QUOTA_PER_INSTALLATION` se reemplaza por `TUNAI_CREDITS_INITIAL` y `TUNAI_CREDITS_PER_MODEL` |
 
 **Convenciones:** igual que el PRD del frontend.
@@ -79,7 +80,9 @@ Sin backend, la clave de Stability tendría que ir dentro de la app y cualquiera
 
 ## 2. Investigación y contexto
 
-### 2.1 Proveedor elegido: Stable Fast 3D (API Stability AI)
+### 2.1 Proveedor hasta v1.8: Stable Fast 3D (API Stability AI)
+> **Histórico.** El adaptador de Stability se eliminó en v1.9; esta sección queda como registro de la decisión inicial.
+
 - **Endpoint:** `POST https://api.stability.ai/v2beta/3d/stable-fast-3d` (multipart).
 - **Autenticación:** `Authorization: Bearer <API_KEY>`.
 - **Vigencia (2026-10-09):** la documentación oficial sigue enlazando `/v2beta/3d/stable-fast-3d` con precio de 10 créditos. La especificación OpenAPI y el catálogo de errores no son públicos.
@@ -96,16 +99,17 @@ Sin backend, la clave de Stability tendría que ir dentro de la app y cualquiera
 - **Licencia del modelo:** Stability AI Community License; gratuita para uso comercial con ingresos < 1 M USD/año. Términos específicos de las salidas de la API: **PENDIENTE DE VALIDAR**.
 - **Repositorio de referencia del modelo** (comportamiento, parámetros, licencia): **https://github.com/Stability-AI/stable-fast-3d.git**. El backend **no** ejecuta este código; consume la API alojada. El repositorio se usa como documentación técnica.
 
-### 2.1.1 Proveedor principal desde v1.8: Tripo API v3
+### 2.1.1 Proveedor único desde v1.9: Tripo API v3
 - **Motivo del cambio:** el ensayo con SF3D del 2026-10-10 funcionó de punta a punta, pero el modelo se ve como "cartón arrugado" (unos 22 mil triángulos y textura de 1024). La misma foto en la web de Tripo dio un resultado claramente mejor. El visor no era la causa: usa las normales del GLB.
 - **Base y autenticación:** `https://openapi.tripo3d.ai/v3`, `Authorization: Bearer <TRIPO_API_KEY>`. La v2 (`api.tripo3d.ai/v2/openapi`) se está retirando; las claves sirven para las dos.
 - **Flujo asíncrono:**
   1. `POST /v3/files` (multipart `file`, JPEG o PNG hasta 20 MB) devuelve `file_token`;
-  2. `POST /v3/generation/image-to-model` con `input` = `file_token`, `model`, `texture`, `pbr`, `texture_quality` y `face_limit` devuelve `task_id`;
+  2. `POST /v3/generation/image-to-model` con `input` = `file_token`, `model`, `texture`, `pbr`, `texture_quality`, `geometry_quality` y `face_limit` devuelve `task_id`;
   3. `GET /v3/tasks/{task_id}`: estados `queued` y `running`, luego `success`, `failed`, `banned`, `expired` o `cancelled`; Tripo recomienda consultar cada 1–2 s;
   4. el GLB se descarga de `output.model_url` (CDN, sin la clave).
 - **Respuestas:** `{"code": 0, "data": {...}}`; los errores traen `code`, `message` y `suggestion`. El catálogo es público (§13.9).
 - **Costo:** 30 créditos por imagen a 3D con textura estándar; textura HD +10, geometría HD +20. El precio por crédito que muestra el panel (0,001 USD) no coincide con el de la documentación (0,01 USD): se confirma al recargar. Tripo congela los créditos al crear la tarea y solo los cobra si termina bien.
+- **Configuración elegida (v1.9):** una prueba en Tripo Studio con malla ultra, textura 4K, PBR y 2 millones de caras gustó, pero cuesta ~60 créditos, genera un GLB de decenas de MB y tarda más de lo que permite el proxy. Se eligió un punto intermedio: textura `detailed` (4K, +10), geometría `standard`, PBR y 200.000 caras = **40 créditos** por modelo. La recarga de 1 USD dio 100 créditos (1 crédito = 0,01 USD), es decir, 2 generaciones.
 - **Créditos gratis:** la documentación menciona 300 para cuentas nuevas, pero la cuenta del proyecto arrancó con saldo 0 (verificado con `GET /v3/account/balance`). Hace falta una recarga (RN-17).
 - **Formato:** GLB con PBR (color base, metálico/rugosidad y normales). Que el visor lo acepte (1 malla, 1 primitiva, sin extensiones obligatorias) se valida con la primera generación pagada (R-BE-13).
 - **Documentación:** https://developers.tripo3d.ai/en/docs (índice para máquinas en `/llms.txt`; cada página tiene versión `.md`).
@@ -266,8 +270,8 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RF-BE-009 | Aplicar el límite global: 2 generaciones exitosas por día (configurable) | Must |
 | RF-BE-010 | Reservar la cuota de forma atómica antes de llamar al proveedor, confirmarla si hay éxito y liberarla si hay fallo | Must |
 | RF-BE-011 | Limitar las llamadas simultáneas al proveedor (configurable; propuesta 2) y responder `503 SERVICE_BUSY` si no hay cupo | Must |
-| RF-BE-012 | Llamar a SF3D con `texture_resolution`, `foreground_ratio` y `remesh` configurables (por defecto `1024`, `0.85`, `none`) | Must |
-| RF-BE-013 | Verificar que la respuesta del proveedor empiece con el magic de GLB (`glTF`) y no exceda un tamaño máximo configurable (por defecto 20 MB, `tunai.generation.max-model-bytes`). Aplica también al adaptador `fake` | Must |
+| RF-BE-012 | Llamar a Tripo con `model`, `face_limit`, `texture_quality`, `geometry_quality` y `pbr` configurables (por defecto `v3.1-20260211`, `200000`, `detailed`, `standard`, `true`; §13.9) | Must |
+| RF-BE-013 | Verificar que la respuesta del proveedor empiece con el magic de GLB (`glTF`) y no exceda un tamaño máximo configurable (por defecto 50 MB, `tunai.generation.max-model-bytes`) | Must |
 | RF-BE-014 | Traducir los errores del proveedor a los códigos propios (sección 15.4) | Must |
 | RF-BE-015 | Devolver los headers `X-Quota-Limit`, `X-Quota-Remaining`, `X-Quota-Reset`, `X-Credits-Balance` y `X-Credits-Per-Model` en respuestas de generación y cuota (y en `402` y `429`), y `Retry-After` en `429` y `503`. `X-Quota-Limit` y `X-Quota-Remaining` cuentan modelos y reflejan **el límite más restrictivo entre los créditos de la instalación y la IP**, para que un `429` nunca llegue con `remaining > 0`; el límite global **no** se expone, para no revelar el presupuesto (A5). `X-Quota-Reset` va en ISO-8601 UTC. `Retry-After` va en segundos: hasta las 00:00 de la zona configurada en `429` y en `503` por límite global; 5 s en `503 SERVICE_BUSY` | Must |
 | RF-BE-016 | Responder todos los errores como `application/problem+json` (RFC 9457) con las propiedades `code` y `traceId` | Must |
@@ -275,7 +279,7 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RF-BE-018 | No escribir imágenes ni modelos en disco; procesarlos solo en memoria. Por defecto Tomcat guarda los archivos multipart en disco temporal: se configura `spring.servlet.multipart.file-size-threshold` igual a `max-file-size` para que queden en memoria (cuenta contra RNF-BE-003) | Must |
 | RF-BE-019 | Documentar la API con OpenAPI (springdoc), habilitado solo en el perfil `dev` | Should |
 | RF-BE-020 | Antes de generar, consultar el saldo de créditos de Stability y responder `503` si es insuficiente (endpoint de saldo **PENDIENTE DE VALIDAR**) | Could |
-| RF-BE-021 | Proveer un adaptador `fake` de `ModelGeneratorPort` que devuelva un GLB de ejemplo sin llamar a ningún proveedor. El GLB de ejemplo tiene la misma forma que la salida de Stable Fast 3D (1 malla, 1 primitiva, 1 material con textura de color base), para que el cliente pruebe el visor y el recoloreado sin gastar créditos. El adaptador se elige con `tunai.generator.provider` (`fake` \| `stability`); el valor por defecto es `fake`, de modo que una llamada real solo ocurre si se configura `stability` de forma explícita | Must |
+| RF-BE-021 | ~~Adaptador `fake` de `ModelGeneratorPort`~~ **Retirado en v1.9**: Tripo es el único proveedor. Las pruebas automáticas usan WireMock (`TripoAdapterTest`, `TripoGenerationApiTest`) o un `ModelGeneratorPort` simulado | — |
 | RF-BE-022 | Obtener la IP real del cliente, en este orden: (1) el header de confianza del proxy de borde (`CF-Connecting-IP`: Render va detrás de Cloudflare, que lo sobrescribe); (2) el valor de `X-Forwarded-For` que agregó el primero de N proxies de confianza contando desde la derecha (N configurable, por defecto 1), **nunca** el primero de la lista, que lo controla el cliente; (3) la IP de la conexión | Must |
 | RF-BE-023 | Generar un `traceId` por petición (filtro web, guardado en el MDC de los logs), devolverlo en el header `X-Trace-Id` y en el campo `traceId` de los errores | Must |
 | RF-BE-024 | Proveer un adaptador `tripo` de `ModelGeneratorPort` sobre Tripo API v3 (§13.9): sube la foto, crea la tarea, la consulta hasta un estado final o hasta `max-wait`, y descarga el GLB sin enviar la clave al CDN. Se elige con `tunai.generator.provider=tripo` y exige `TRIPO_API_KEY` al arrancar | Must |
@@ -300,7 +304,7 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RNF-BE-012 | Observabilidad | Logs estructurados (JSON) con `traceId`, usando el soporte nativo de Spring Boot (`logging.structured.format.console=ecs`, perfil `prod`); en local, logs legibles. Métricas Micrometer internas `tunai.generations{provider, result}` y `tunai.provider.latency{provider, result}` (`result`: success, rejected, timeout, unavailable, error), medidas por un decorador del puerto `ModelGeneratorPort`. Como Actuator solo expone `health`, se publican en el log cada `TUNAI_METRICS_LOG_INTERVAL` (5 min) y solo si hubo actividad; las métricas de la JVM se descartan para ahorrar memoria |
 | RNF-BE-013 | Mantenibilidad | Arquitectura hexagonal verificada con ArchUnit en CI |
 | RNF-BE-014 | Calidad | Spotless (palantir-java-format), Checkstyle (`config/checkstyle/checkstyle.xml`: errores probables, nombres y prácticas prohibidas; el formato lo cubre Spotless) y JaCoCo; cobertura mínima de **70 %** de líneas en los paquetes `domain` y `application`; el CI falla si baja de ese umbral o hay violaciones |
-| RNF-BE-015 | Configuración | Toda la configuración con `@ConfigurationProperties` validada (`@Validated`) al arrancar: si el proveedor es `stability` y falta la clave, o si un límite es inválido, la app no inicia |
+| RNF-BE-015 | Configuración | Toda la configuración con `@ConfigurationProperties` validada (`@Validated`) al arrancar: si falta `TRIPO_API_KEY`, o si un límite o parámetro es inválido, la app no inicia |
 | RNF-BE-016 | Compatibilidad | API versionada en la ruta (`/api/v1`); cambios incompatibles solo en `/api/v2` |
 
 ---
@@ -317,9 +321,9 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RN-12 | No se almacenan imágenes ni modelos en el servidor |
 | RN-13 | Nunca se reintenta automáticamente una llamada al proveedor (cada éxito tiene costo) |
 | RN-14 | **Limitación aceptada:** la cuota vive en memoria; un reinicio o apagado del servicio la reinicia. El tope real de gasto es el **saldo de créditos** (25 gratuitos, sin compras): al agotarse, Stability rechaza la llamada y el backend responde `503 SERVICE_UNAVAILABLE` (A9) |
-| RN-15 | Durante el desarrollo **no se hacen llamadas reales** al proveedor: se usa el adaptador `fake` (RF-BE-021) y WireMock. Solo hay 2 generaciones reales: **1 ensayo** unos días antes de la presentación y **1 en vivo** durante la demo |
+| RN-15 | Las pruebas automáticas **no hacen llamadas reales** al proveedor: usan WireMock o un generador simulado. Cada generación real gasta 40 créditos y se planifica (primera prueba, demo) |
 | RN-16 | Solo se envían al proveedor fotos que contengan un **vehículo**. SF3D no lo verifica: modela el objeto principal de cualquier foto y cobra la generación. La verificación la hace el **cliente** con un clasificador de imágenes local antes de enviar (ver `HANDOFF-Frontend-UI.md` §5.3.1). **Limitación aceptada:** el backend no la repite, por la RAM de Render (512 MB) y porque el único cliente es la app oficial; un cliente alterado podría saltarla, y el gasto queda acotado por la cuota (RN-02, RN-10, RN-11) |
-| RN-17 | **Presupuesto de Tripo (v1.8):** recarga mínima (alrededor de 1 USD) para unas 10–12 generaciones: primera prueba por API, ajustes, ensayo general, demo y margen. RN-11 y RN-15 siguen aplicando a Stability, que queda como respaldo con sus créditos restantes (15, 1 generación). Con `tripo` también aplica la cuota (RF-BE-015) y el proveedor vuelve a `fake` fuera de las pruebas planificadas |
+| RN-17 | **Presupuesto de Tripo (v1.9):** recarga de 1 USD = 100 créditos = 2 generaciones de 40 créditos (primera prueba y demo). La cuota (RF-BE-015) limita el gasto en Render: 2 por IP y 2 global por día |
 
 ---
 
@@ -352,7 +356,7 @@ No hay persistencia. Modelo de dominio en memoria:
 ```
 adapter.in.web  ──▶  application (casos de uso)  ──▶  domain
                          │ usa puertos de salida
-adapter.out.stability ◀──┘ (implementa ModelGeneratorPort)
+adapter.out.tripo     ◀──┘ (implementa ModelGeneratorPort)
 adapter.out.quota     ◀──── (implementa QuotaStorePort)
 config (Spring)  → ensambla beans
 ```
@@ -361,7 +365,7 @@ config (Spring)  → ensambla beans
 ```
 com.tunai.api
 ├── domain
-│   ├── model        (InstallationId, ClientIp, VehicleImage, ImageFormat, GenerationOptions,
+│   ├── model        (InstallationId, ClientIp, VehicleImage, ImageFormat,
 │   │                 GeneratedModel, QuotaStatus, QuotaReservation)
 │   └── exception    (InvalidImageException, QuotaExceededException, GlobalLimitReachedException,
 │                     ProviderRejectedException, ProviderFailureException, ProviderTimeoutException,
@@ -374,8 +378,7 @@ com.tunai.api
 │   ├── in.web       (GenerationController, QuotaController, ApiExceptionHandler,
 │   │                 ClientContextResolver, ImageRequestMapper, QuotaHeaders)
 │   └── out
-│       ├── stability (StabilityFast3dAdapter, StabilityErrorTranslator; StabilityProperties vive en config)
-│       ├── fake      (FakeModelGenerator: GLB de ejemplo para desarrollo, RF-BE-021)
+│       ├── tripo     (TripoAdapter, TripoErrorTranslator, TripoOptions; TripoProperties vive en config)
 │       ├── quota     (InMemoryQuotaStore, DailyCounter)
 │       ├── imageio   (ImageIoDimensionsReader)
 │       └── concurrency (SemaphoreConcurrencyLimiter)
@@ -386,17 +389,17 @@ com.tunai.api
 | Patrón | Dónde | Por qué |
 |---|---|---|
 | Ports & Adapters | `application.port.*` + `adapter.*` | Cambiar proveedor de IA o almacén de cuota sin tocar los casos de uso |
-| Adapter | `StabilityFast3dAdapter` traduce el contrato de Stability al dominio | Aísla la API externa |
-| Strategy | `ModelGeneratorPort` (`stability` para la demo, `fake` para desarrollo; otros proveedores mañana) | Abierto/cerrado; se elige por configuración |
+| Adapter | `TripoAdapter` traduce el contrato de Tripo al dominio | Aísla la API externa |
+| Strategy | `ModelGeneratorPort` (hoy solo Tripo; en los tests, WireMock o un simulado) | Abierto/cerrado: otro proveedor no toca los casos de uso |
 | Reservation (reserve → commit/release) | `QuotaStorePort` | Evita condiciones de carrera y garantiza RN-03 |
 | Value Object | Paquete `domain.model` | Invariantes en el constructor; inmutabilidad |
-| Translator / Anti-Corruption Layer | `StabilityErrorTranslator` | Los códigos del proveedor no se filtran al cliente |
+| Translator / Anti-Corruption Layer | `TripoErrorTranslator` | Los códigos del proveedor no se filtran al cliente |
 | Global Exception Handler | `ApiExceptionHandler` (`@RestControllerAdvice` + `ProblemDetail`) | Errores uniformes (RFC 9457) |
 | Options / Configuration Object | `@ConfigurationProperties` validadas | Sin valores fijos en el código |
 | Dependency Injection | Inyección por constructor (Spring) | Testeable y explícita |
 
 ### 13.4 Principios SOLID
-- **S:** el controlador solo traduce HTTP ↔ caso de uso; el servicio orquesta; el adaptador habla con Stability.
+- **S:** el controlador solo traduce HTTP ↔ caso de uso; el servicio orquesta; el adaptador habla con Tripo.
 - **O:** un nuevo proveedor o almacén de cuota es una nueva implementación de su puerto.
 - **L:** `InMemoryQuotaStore` y un futuro almacén persistente cumplen el mismo contrato (tests de contrato compartidos).
 - **I:** puertos separados para generación, cuota y concurrencia.
@@ -428,7 +431,7 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
 - **Consecuencia aceptada (RN-14):** un reinicio la vacía. Como Render apaga el servicio tras 15 minutos sin tráfico, el límite global diario **no** es un tope confiable: el tope real es el saldo de créditos (25 gratuitos).
 - **Camino de evolución:** implementar `QuotaStorePort` con un almacén persistente (por ejemplo, Redis o Postgres) **sin cambios** en dominio, aplicación ni web. Los tests de contrato del puerto garantizan el mismo comportamiento.
 
-### 13.7 Comunicación con Stability
+### 13.7 Comunicación con Stability (histórico, retirado en v1.9)
 - `RestClient` de Spring (síncrono; una petición por hilo es suficiente con concurrencia ≤ 2), con los timeouts de RNF-BE-002.
 - Cuerpo multipart con `image`, `texture_resolution`, `foreground_ratio` y `remesh`.
 - **Cliente:** HTTP/1.1 explícito (una subida por petición no gana nada con HTTP/2 y el *upgrade* h2c falla con algunos servidores). El multipart se arma a mano: en Spring 7, `MultipartBodyBuilder` depende de Reactive Streams, que la app no incluye.
@@ -446,7 +449,7 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
 - **Clientes:** `RestClient` sobre HTTP/1.1 con la URL base de la v3 y la clave en `Authorization`. La descarga del GLB usa otro `RestClient` **sin** la clave, porque `model_url` apunta a otro host (CDN).
 - **Asíncrono a síncrono:** el endpoint `POST /api/v1/generations` sigue siendo síncrono. El adaptador consulta la tarea cada `poll-interval` (2 s) hasta `max-wait` (85 s). Con la subida y la descarga debe quedar por debajo de los ~100 s del proxy de Render (Cloudflare) y de los 120 s del cliente. Si Tripo tarda más, las opciones son un modelo más rápido (`TUNAI_TRIPO_MODEL`) o un contrato asíncrono con el cliente (P-BE-10).
 - **Sin reintentos (RN-13):** la tarea se crea una sola vez. Si se agota `max-wait`, se responde `504 PROVIDER_TIMEOUT` y se libera la cuota, pero la tarea puede terminar en Tripo y cobrar sus créditos: su `task_id` queda en el log (WARN).
-- **Parámetros fijos** (`TripoOptions`): `model`, `face_limit` (por defecto 50.000, para acotar el GLB y lo que dibuja el visor), `texture_quality` (`standard` o `detailed`) y `pbr`. No se envían `quad` (fuerza FBX) ni `compress` (meshopt, que el visor no soporta). Los `GenerationOptions` de SF3D se ignoran.
+- **Parámetros fijos** (`TripoOptions`): `model` (`v3.1-20260211`), `face_limit` (200.000, para acotar el GLB y lo que dibuja el visor), `texture_quality` (`detailed`, 4K, +10 créditos), `geometry_quality` (`standard`; `detailed` = malla ultra, +20) y `pbr` (`true`). Total: 40 créditos por modelo, que el log confirma con `credits_consumed`. No se envían `quad` (fuerza FBX) ni `compress` (meshopt, que el visor no soporta).
 - **Respuesta:** se exige `code == 0` y `data`; el GLB se lee como máximo `max-model-bytes + 1` y se valida su magic (RF-BE-013).
 - **Mapeo de errores** (`TripoErrorTranslator`), primero por `code` y después por estado HTTP:
   - 2003, 2004, 2008 (archivo vacío, formato, contenido prohibido) y tarea `banned` → `ProviderRejectedException` (422);
@@ -456,10 +459,10 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
   - 2002 (parámetro no soportado: configuración nuestra), 5xx, respuestas que no son JSON, tareas `failed`, `expired` o `cancelled`, `success` sin `model_url` → `ProviderFailureException` (502);
   - timeouts de red o de `max-wait` → `ProviderTimeoutException` (504).
 
-### 13.8 Cuota en modo `fake`
-- La cuota se aplica igual con el proveedor `fake`, para poder probar `429` y los headers.
-- Como los límites por defecto (2) frenarían el desarrollo, en local y en las pruebas de integración con el frontend se suben por variables de entorno (por ejemplo, `TUNAI_QUOTA_PER_IP=50` y `TUNAI_QUOTA_GLOBAL_DAILY=50`). Los créditos por instalación (45, 15 por modelo) se dejan igual que en la demo.
-- Al arrancar, el backend registra en el log el proveedor activo y los límites efectivos. Si el proveedor es `stability` y el límite global es mayor que 2, lo registra como advertencia (WARN).
+### 13.8 Cuota y gasto de créditos
+- Desde v1.9 no hay proveedor `fake`: **cualquier generación exitosa gasta créditos de Tripo**, también en local. La cuota es el único freno del gasto en Render; las pruebas automáticas usan WireMock o un generador simulado.
+- Los límites por defecto (2 por IP y 2 global por día) equivalen al saldo (2 generaciones de 40 créditos). Subirlos solo tiene sentido después de recargar.
+- Al arrancar, el backend registra en el log el proveedor activo y los límites efectivos. Si el límite global es mayor que 2, lo registra como advertencia (WARN).
 - Volver los límites a 2 forma parte del checklist del ensayo (Anexo E).
 
 ---
@@ -573,13 +576,13 @@ No aplica al backend: pintura, rines, comparación y exportación ocurren en el 
 | Autenticación | Ninguna de usuario (no hay cuentas). El `X-Installation-Id` es solo un identificador de cuota, no una credencial |
 | Autorización | Cada instalación solo consulta su propia cuota |
 | Abuso | Límites por IP y globales, concurrencia, tamaño de entrada y salida (RN-10, RN-11, RF-BE-011) |
-| Secretos | `STABILITY_API_KEY` y `TRIPO_API_KEY` solo como variables de entorno; `.env` y secretos excluidos del repositorio (`.gitignore`); escaneo de secretos en CI (GitHub secret scanning). La clave la configura el autor **a mano**: en local, desde "Editar las variables de entorno de esta cuenta" de Windows (no por consola, para que no quede en el historial); en Render, desde *Environment* del dashboard. **Nunca** se pega en chats, asistentes de IA, issues ni archivos del proyecto |
+| Secretos | `TRIPO_API_KEY` solo como variable de entorno; `.env` y secretos excluidos del repositorio (`.gitignore`); escaneo de secretos en CI (GitHub secret scanning). La clave la configura el autor **a mano**: en local, desde "Editar las variables de entorno de esta cuenta" de Windows (no por consola, para que no quede en el historial); en Render, desde *Environment* del dashboard. **Nunca** se pega en chats, asistentes de IA, issues ni archivos del proyecto |
 | Protección de imágenes | Solo en memoria durante la petición; no se escriben a disco ni se registran |
-| Comunicación externa | HTTPS hacia Stability; HTTPS (Render) hacia el cliente |
+| Comunicación externa | HTTPS hacia Tripo; HTTPS (Render) hacia el cliente |
 | Cabeceras | `X-Content-Type-Options: nosniff`; CORS **deshabilitado** (no hay clientes de navegador) |
 | Dependencias | Revisión de vulnerabilidades con Dependabot en GitHub |
 | Eliminación de información | No hay datos persistidos. La cuota en memoria expira al cambiar el día |
-| Transferencia internacional | Las fotos viajan a Stability AI (fuera de Colombia): base legal y texto de consentimiento según Ley 1581 de 2012, art. 26 — **PENDIENTE DE VALIDAR** |
+| Transferencia internacional | Las fotos viajan a Tripo (fuera de Colombia): base legal y texto de consentimiento según Ley 1581 de 2012, art. 26 — **PENDIENTE DE VALIDAR** |
 
 ---
 
@@ -711,13 +714,13 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 | CA-BE-02 | Imágenes inválidas producen `400`, `413` o `415` sin llamar al proveedor ni consumir cuota |
 | CA-BE-03 | Con los valores por defecto (45 créditos, 15 por modelo), la cuarta generación de una instalación produce `402 INSUFFICIENT_CREDITS` sin `Retry-After`; los créditos no se reinician a las 00:00 |
 | CA-BE-04 | Los límites por IP, globales y de concurrencia se aplican según la configuración |
-| CA-BE-05 | La clave de Stability no aparece en el repositorio, ni en los logs, ni en las respuestas |
+| CA-BE-05 | La clave de Tripo no aparece en el repositorio, ni en los logs, ni en las respuestas |
 | CA-BE-06 | Todos los errores son `application/problem+json` con `code` del catálogo §15.4 y sin stack traces |
 | CA-BE-07 | Los fallos del proveedor (rechazo, 5xx, tiempo agotado) liberan la cuota |
 | CA-BE-08 | Los tests unitarios, de integración (WireMock) y de arquitectura (ArchUnit) pasan en CI |
 | CA-BE-09 | El servicio funciona en Render gratuito (512 MB) y responde `GET /actuator/health` tras el arranque en frío |
 | CA-BE-10 | No se escriben imágenes ni modelos en disco (verificado por revisión y test) |
-| CA-BE-11 | Con la configuración por defecto (`fake`) ninguna petición llega a Stability; el saldo de créditos antes del ensayo sigue en 25 |
+| CA-BE-11 | Ningún test automático llega a Tripo real: todos usan WireMock o un generador simulado |
 
 ---
 
@@ -725,20 +728,12 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 
 | Variable | Propiedad | Valor por defecto | Obligatoria |
 |---|---|---|---|
-| `TUNAI_GENERATOR_PROVIDER` | `tunai.generator.provider` | `fake` | No (en Render, `tripo` o `stability` solo para las pruebas planificadas y la demo) |
-| `STABILITY_API_KEY` | `tunai.stability.api-key` | — | Solo si el proveedor es `stability` |
-| `TUNAI_STABILITY_BASE_URL` | `tunai.stability.base-url` | `https://api.stability.ai` | No |
-| `TUNAI_TEXTURE_RESOLUTION` | `tunai.stability.texture-resolution` | `1024` | No |
-| `TUNAI_FOREGROUND_RATIO` | `tunai.stability.foreground-ratio` | `0.85` | No |
-| `TUNAI_REMESH` | `tunai.stability.remesh` | `none` | No |
-| `TUNAI_VERTEX_COUNT` | `tunai.stability.vertex-count` | `-1` (no se envía) | No |
-| `TUNAI_STABILITY_CONNECT_TIMEOUT` | `tunai.stability.connect-timeout` | `10s` | No |
-| `TUNAI_STABILITY_READ_TIMEOUT` | `tunai.stability.read-timeout` | `60s` | No |
-| `TRIPO_API_KEY` | `tunai.tripo.api-key` | — | Solo si el proveedor es `tripo` |
+| `TRIPO_API_KEY` | `tunai.tripo.api-key` | — | **Sí** (sin ella la app no arranca) |
 | `TUNAI_TRIPO_BASE_URL` | `tunai.tripo.base-url` | `https://openapi.tripo3d.ai/v3` | No |
 | `TUNAI_TRIPO_MODEL` | `tunai.tripo.model` | `v3.1-20260211` | No (`v3.0-20250812` o `v2.5-20250123` si v3.1 tarda demasiado) |
-| `TUNAI_TRIPO_FACE_LIMIT` | `tunai.tripo.face-limit` | `50000` | No (500–1.500.000) |
-| `TUNAI_TRIPO_TEXTURE_QUALITY` | `tunai.tripo.texture-quality` | `standard` | No (`detailed` cuesta +10 créditos) |
+| `TUNAI_TRIPO_FACE_LIMIT` | `tunai.tripo.face-limit` | `200000` | No (500–1.500.000) |
+| `TUNAI_TRIPO_TEXTURE_QUALITY` | `tunai.tripo.texture-quality` | `detailed` | No (`standard` ahorra 10 créditos) |
+| `TUNAI_TRIPO_GEOMETRY_QUALITY` | `tunai.tripo.geometry-quality` | `standard` | No (`detailed` cuesta +20 créditos) |
 | `TUNAI_TRIPO_PBR` | `tunai.tripo.pbr` | `true` | No |
 | `TUNAI_TRIPO_CONNECT_TIMEOUT` | `tunai.tripo.connect-timeout` | `10s` | No |
 | `TUNAI_TRIPO_READ_TIMEOUT` | `tunai.tripo.read-timeout` | `30s` | No (por petición) |
@@ -752,8 +747,7 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 | `TUNAI_CLIENT_IP_HEADER` | `tunai.client-ip.trusted-header` | `CF-Connecting-IP` | No (vacío para no usarlo) |
 | `TUNAI_TRUSTED_PROXIES` | `tunai.client-ip.trusted-proxies` | `1` | No |
 | `TUNAI_MAX_CONCURRENT` | `tunai.generation.max-concurrent` | `2` | No |
-| `TUNAI_MAX_MODEL_BYTES` | `tunai.generation.max-model-bytes` | `20971520` (20 MB) | No |
-| `TUNAI_FAKE_DELAY` | `tunai.generator.fake.delay` | `2s` | No (simula la latencia del proveedor) |
+| `TUNAI_MAX_MODEL_BYTES` | `tunai.generation.max-model-bytes` | `52428800` (50 MB) | No |
 | `TUNAI_MAX_IMAGE_BYTES` | `tunai.image.max-bytes` | `10485760` | No |
 | `TUNAI_MIN_IMAGE_SIDE` | `tunai.image.min-side` | `512` | No |
 | `PORT` | `server.port` | Lo asigna Render | Sí (en Render) |
@@ -787,10 +781,10 @@ ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 | Dominio | Objetos de valor (validación de imagen, ID), `QuotaStatus` | JUnit 5 + AssertJ |
 | Aplicación | `GenerateModelService`: éxito, cada tipo de fallo, liberación de cuota | Mockito |
 | Contrato del puerto | Suite común para cualquier `QuotaStorePort` (reservar, confirmar, liberar, cambio de día con `Clock` fijo, concurrencia) | JUnit 5 |
-| Adaptador Stability | Respuestas 200, 4xx, 5xx, tiempo agotado y no-GLB | WireMock |
+| Adaptador Tripo | Subida, tarea, consulta, descarga; códigos de error, tareas fallidas, tiempo agotado y no-GLB | WireMock |
 | Web | Controladores, headers, `ProblemDetail`, límites de multipart | MockMvc |
 | Arquitectura | `domain` sin Spring; dependencias solo hacia adentro | ArchUnit |
-| Extremo a extremo (manual) | 1 generación real de ensayo contra Stability antes de la demo (RN-15); el resto del flujo se prueba con el adaptador `fake` | Lista de verificación |
+| Extremo a extremo | Flujo completo contra Tripo simulado (`TripoGenerationApiTest`); 1 generación real de prueba antes de la demo (RN-15, Anexo E) | WireMock + lista de verificación |
 
 ## Anexo D — Definición de terminado
 1. Tests en verde.
@@ -803,29 +797,18 @@ ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 
 ## Anexo E — Checklist de ensayo y demo
 
-**Tripo (proveedor principal desde v1.8):**
-1. Recargar en el panel de Tripo y confirmar el saldo: `GET /v3/account/balance` desde la terminal del autor, con la clave tomada de su variable de entorno.
-2. En Render → *Environment*: `TRIPO_API_KEY` configurada a mano con **Save only**. Luego `TUNAI_GENERATOR_PROVIDER=tripo` y las cuotas en un valor bajo (por ejemplo, 3 por instalación, 3 por IP y 3 global).
-3. Confirmar en el log de arranque `Proveedor de generación 3D activo: TRIPO` y la línea WARN con modelo, caras y espera máxima.
+**Tripo (único proveedor desde v1.9; 40 créditos por generación):**
+1. Confirmar el saldo en el panel de Tripo (≥ 40 créditos por generación planificada).
+2. En Render → *Environment*: `TRIPO_API_KEY` configurada a mano con **Save only**, y las cuotas en 2 (`TUNAI_QUOTA_PER_IP`, `TUNAI_QUOTA_GLOBAL_DAILY`).
+3. Confirmar en el log de arranque la línea WARN `Generador TRIPO` con modelo, caras, textura `DETAILED`, geometría `STANDARD` y espera máxima.
 4. **Primera prueba:**
    - generar desde la app con una foto ya probada;
-   - medir la latencia en el log (`Tarea de Tripo … lista`);
+   - en el log (`Tarea de Tripo … lista`), revisar la latencia, el tamaño del GLB y `credits_consumed` (esperado: 40);
    - guardar el GLB y revisar el visor, el recoloreado y la exportación.
-5. Si el GLB no pasa el visor o la latencia supera los ~85 s, ajustar antes de seguir (R-BE-13, R-BE-14).
-6. Volver a `TUNAI_GENERATOR_PROVIDER=fake` entre pruebas.
+5. Si el GLB no pasa el visor, pesa demasiado o la latencia supera los ~85 s, ajustar antes de la demo (`TUNAI_TRIPO_FACE_LIMIT`, `TUNAI_TRIPO_TEXTURE_QUALITY`; R-BE-13, R-BE-14).
 
-**Stability (respaldo):**
-
-**Ensayo (1 crédito, unos días antes del 9 de noviembre):**
-1. Verificar en el panel de Stability que el saldo sea 25 créditos y que el endpoint y el precio de SF3D no hayan cambiado (P-BE-04, supuesto 6).
-2. En Render → *Environment*: `STABILITY_API_KEY` configurada (a mano), `TUNAI_GENERATOR_PROVIDER=stability`, `TUNAI_QUOTA_PER_IP=2`, `TUNAI_QUOTA_GLOBAL_DAILY=2`.
-3. Esperar el redespliegue y confirmar en el log de arranque el proveedor `stability` y los límites en 2.
-4. Desde la app instalada: despertar el servidor, elegir una foto que pase el clasificador y generar.
-5. Medir la latencia, guardar el GLB como respaldo y revisar el recoloreado.
-6. Volver a `TUNAI_GENERATOR_PROVIDER=fake`.
-
-**Demo (1 crédito):**
+**Demo (40 créditos):**
 1. Confirmar que queda saldo para 1 generación.
-2. Cambiar a `stability` con los límites en 2; abrir la app unos minutos antes para despertar el servidor.
-3. Usar una foto ya probada (o muy parecida a la del ensayo).
-4. Tener el GLB del ensayo en el garaje como respaldo.
+2. Abrir la app unos minutos antes para despertar el servidor.
+3. Usar una foto ya probada (o muy parecida a la de la primera prueba).
+4. Tener el GLB de la primera prueba en el garaje como respaldo.
