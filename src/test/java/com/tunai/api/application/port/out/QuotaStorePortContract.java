@@ -122,6 +122,17 @@ public abstract class QuotaStorePortContract {
         assertThat(store.status(invented, ip("3.3.3.3")).remaining()).isEqualTo(2);
     }
 
+    /** RN-10: rotar direcciones IPv6 dentro del mismo /64 no esquiva el límite por IP. */
+    @Test
+    void ipv6AddressesInTheSameSlash64ShareTheIpLimit() {
+        QuotaStorePort store = store(2, 1, 6);
+        store.commit(store.tryReserve(newInstallation(), ip("2800:e2:3f00:12::1")));
+
+        assertThatThrownBy(() -> store.tryReserve(newInstallation(), ip("2800:e2:3f00:12::2")))
+                .isInstanceOf(QuotaExceededException.class);
+        store.commit(store.tryReserve(newInstallation(), ip("2800:e2:3f00:13::1")));
+    }
+
     @Test
     void theReportedStatusIsTheMostRestrictiveBetweenCreditsAndIp() {
         QuotaStorePort store = store(3, 3, 6);

@@ -181,6 +181,6 @@ public final class InMemoryQuotaStore implements QuotaStorePort {
     }
 
     private static String ipKey(ClientIp clientIp) {
-        return "ip:" + clientIp.value();
+        return "ip:" + clientIp.quotaKey();
     }
 }
