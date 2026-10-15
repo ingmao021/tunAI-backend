@@ -28,8 +28,9 @@ public record TripoProperties(
         String apiKey,
         @NotNull @DefaultValue("https://openapi.tripo3d.ai/v3") URI baseUrl,
         @NotBlank @DefaultValue("v3.1-20260211") String model,
-        @Min(TripoOptions.MIN_FACES) @Max(TripoOptions.MAX_FACES) @DefaultValue("50000") int faceLimit,
-        @NotNull @DefaultValue("standard") TripoOptions.TextureQuality textureQuality,
+        @Min(TripoOptions.MIN_FACES) @Max(TripoOptions.MAX_FACES) @DefaultValue("200000") int faceLimit,
+        @NotNull @DefaultValue("detailed") TripoOptions.TextureQuality textureQuality,
+        @NotNull @DefaultValue("standard") TripoOptions.GeometryQuality geometryQuality,
         @DefaultValue("true") boolean pbr,
         @NotNull @DefaultValue("10s") Duration connectTimeout,
         @NotNull @DefaultValue("30s") Duration readTimeout,
@@ -41,14 +42,15 @@ public record TripoProperties(
     }
 
     public TripoOptions options() {
-        return new TripoOptions(model, faceLimit, textureQuality, pbr);
+        return new TripoOptions(model, faceLimit, textureQuality, geometryQuality, pbr);
     }
 
     /** Nunca incluye la clave: el {@code toString} de un record la mostraría en logs y errores de arranque. */
     @Override
     public String toString() {
         return "TripoProperties[apiKey=" + (hasApiKey() ? "****" : "(vacía)") + ", baseUrl=" + baseUrl + ", model="
-                + model + ", faceLimit=" + faceLimit + ", textureQuality=" + textureQuality + ", pbr=" + pbr
+                + model + ", faceLimit=" + faceLimit + ", textureQuality=" + textureQuality
+                + ", geometryQuality=" + geometryQuality + ", pbr=" + pbr
                 + ", connectTimeout=" + connectTimeout + ", readTimeout=" + readTimeout + ", pollInterval="
                 + pollInterval + ", maxWait=" + maxWait + "]";
     }

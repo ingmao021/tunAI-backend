@@ -151,10 +151,10 @@ class ApiExceptionHandlerTest {
 
     @Test
     void hidesInternalDetailsOfProviderAndBudgetErrors() throws Exception {
-        MvcTestResult provider = call(() -> new ProviderFailureException("Stability devolvió 500 con body secreto"));
+        MvcTestResult provider = call(() -> new ProviderFailureException("Tripo devolvió 500 con body secreto"));
         MvcTestResult global = call(() -> new GlobalLimitReachedException("6 de 6 créditos", Duration.ofHours(1)));
 
-        assertThat(provider.getResponse().getContentAsString()).doesNotContain("secreto", "Stability");
+        assertThat(provider.getResponse().getContentAsString()).doesNotContain("secreto", "Tripo");
         assertThat(global.getResponse().getContentAsString()).doesNotContain("créditos", "6 de 6");
     }
 

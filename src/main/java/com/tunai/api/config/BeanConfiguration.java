@@ -36,8 +36,11 @@ public class BeanConfiguration {
     /** Margen para los encabezados del formulario multipart por encima del tamaño de la imagen (RNF-BE-007). */
     static final DataSize MULTIPART_OVERHEAD = DataSize.ofMegabytes(1);
 
-    /** Generaciones reales que cubre el saldo gratuito (RN-11); por encima se advierte al arrancar (§13.8). */
+    /** Generaciones que cubre el saldo de Tripo (100 créditos, ~40 por modelo); por encima se advierte al arrancar. */
     static final int REAL_BUDGET_GENERATIONS = 2;
+
+    /** Etiqueta {@code provider} de las métricas (RNF-BE-012). */
+    static final String PROVIDER = "tripo";
 
     @Bean
     ImagePolicy imagePolicy(ImageProperties properties) {
@@ -55,10 +58,10 @@ public class BeanConfiguration {
     }
 
     @Bean
-    QuotaStorePort quotaStore(QuotaProperties quota, GeneratorProperties generator, Clock clock) {
+    QuotaStorePort quotaStore(QuotaProperties quota, Clock clock) {
         QuotaLimits limits = new QuotaLimits(
                 quota.initialCredits(), quota.creditsPerModel(), quota.perIp(), quota.globalDaily(), quota.timezone());
-        logEffectiveLimits(limits, generator.provider());
+        logEffectiveLimits(limits);
         return new InMemoryQuotaStore(limits, clock);
     }
 
@@ -73,17 +76,10 @@ public class BeanConfiguration {
             QuotaStorePort quota,
             ModelGeneratorPort generator,
             GenerationProperties properties,
-            StabilityProperties stability,
-            GeneratorProperties generatorProperties,
             MeterRegistry meterRegistry) {
-        ModelGeneratorPort metered = new MeteredModelGenerator(
-                generator, meterRegistry, generatorProperties.provider().name());
+        ModelGeneratorPort metered = new MeteredModelGenerator(generator, meterRegistry, PROVIDER);
         return new GenerateModelService(
-                concurrency,
-                quota,
-                metered,
-                stability.generationOptions(),
-                properties.maxModelBytes().toBytes());
+                concurrency, quota, metered, properties.maxModelBytes().toBytes());
     }
 
     @Bean
@@ -106,19 +102,18 @@ public class BeanConfiguration {
     }
 
     /** §13.8: el operador ve al arrancar qué proveedor y qué límites quedaron activos. */
-    private static void logEffectiveLimits(QuotaLimits limits, GeneratorProperties.Provider provider) {
+    private static void logEffectiveLimits(QuotaLimits limits) {
         log.info(
                 "Cuota: {} créditos por instalación, {} por modelo; diaria {} por IP, {} global; reinicio a las"
-                        + " 00:00 {} (proveedor {})",
+                        + " 00:00 {}",
                 limits.initialCredits(),
                 limits.creditsPerModel(),
                 limits.perIp(),
                 limits.globalDaily(),
-                limits.zone(),
-                provider);
-        if (provider == GeneratorProperties.Provider.STABILITY && limits.globalDaily() > REAL_BUDGET_GENERATIONS) {
+                limits.zone());
+        if (limits.globalDaily() > REAL_BUDGET_GENERATIONS) {
             log.warn(
-                    "Proveedor stability con límite global {} > {}: se pueden gastar más créditos de los"
+                    "Límite global {} > {}: se pueden gastar más créditos de Tripo de los"
                             + " presupuestados."
                             + " Revisa TUNAI_QUOTA_GLOBAL_DAILY (Anexo E)",
                     limits.globalDaily(),

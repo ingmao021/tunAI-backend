@@ -1,15 +1,22 @@
 package com.tunai.api.adapter.in.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 import com.tunai.api.TestImages;
+import com.tunai.api.application.port.out.ModelGeneratorPort;
+import com.tunai.api.domain.model.GeneratedModel;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
 
@@ -19,7 +26,6 @@ import org.springframework.test.web.servlet.assertj.MvcTestResult;
  */
 @SpringBootTest(
         properties = {
-            "tunai.generator.fake.delay=0s",
             "tunai.quota.initial-credits=30",
             "tunai.quota.credits-per-model=15",
             "tunai.quota.per-ip=3",
@@ -34,6 +40,15 @@ class QuotaApiTest {
     private final String installation = UUID.randomUUID().toString();
     private final String ip = "190.24." + ThreadLocalRandom.current().nextInt(256) + "."
             + ThreadLocalRandom.current().nextInt(256);
+
+    @MockitoBean
+    ModelGeneratorPort generator;
+
+    @BeforeEach
+    void stubGenerator() {
+        when(generator.generate(any()))
+                .thenReturn(GeneratedModel.fromGlb("glTF-model".getBytes(StandardCharsets.US_ASCII)));
+    }
 
     @Test
     void quotaEndpointReturnsTheContractWithoutConsumingQuota() {

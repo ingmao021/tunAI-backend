@@ -15,7 +15,6 @@ import com.tunai.api.domain.exception.QuotaExceededException;
 import com.tunai.api.domain.exception.ServiceBusyException;
 import com.tunai.api.domain.model.ClientIp;
 import com.tunai.api.domain.model.GeneratedModel;
-import com.tunai.api.domain.model.GenerationOptions;
 import com.tunai.api.domain.model.ImageFormat;
 import com.tunai.api.domain.model.InstallationId;
 import com.tunai.api.domain.model.QuotaReservation;
@@ -50,11 +49,11 @@ class GenerateModelServiceTest {
     private final RecordingLimiter limiter = new RecordingLimiter();
 
     private GenerateModelService service(ModelGeneratorPort generator, long maxModelBytes) {
-        return new GenerateModelService(limiter, quota, generator, GenerationOptions.DEFAULTS, maxModelBytes);
+        return new GenerateModelService(limiter, quota, generator, maxModelBytes);
     }
 
     private ModelGeneratorPort succeeding() {
-        return (image, options) -> {
+        return image -> {
             events.add("generate");
             return GeneratedModel.fromGlb(GLB);
         };
@@ -70,15 +69,13 @@ class GenerateModelServiceTest {
     }
 
     @Test
-    void passesTheConfiguredOptionsToTheProvider() {
-        GenerationOptions options = new GenerationOptions(512, 0.9, GenerationOptions.Remesh.QUAD);
-        ModelGeneratorPort generator = (image, opts) -> {
-            assertThat(opts).isEqualTo(options);
+    void passesThePhotoToTheProvider() {
+        ModelGeneratorPort generator = image -> {
             assertThat(image).isSameAs(COMMAND.image());
             return GeneratedModel.fromGlb(GLB);
         };
 
-        new GenerateModelService(limiter, quota, generator, options, 1024).generate(COMMAND);
+        new GenerateModelService(limiter, quota, generator, 1024).generate(COMMAND);
     }
 
     static Stream<Supplier<RuntimeException>> providerFailures() {
@@ -92,7 +89,7 @@ class GenerateModelServiceTest {
     @ParameterizedTest
     @MethodSource("providerFailures")
     void anyFailureReleasesTheReservationAndThePermit(Supplier<RuntimeException> failure) {
-        ModelGeneratorPort failing = (image, options) -> {
+        ModelGeneratorPort failing = image -> {
             events.add("generate");
             throw failure.get();
         };
@@ -137,7 +134,7 @@ class GenerateModelServiceTest {
 
     @Test
     void neverRetriesTheProvider() {
-        ModelGeneratorPort failing = (image, options) -> {
+        ModelGeneratorPort failing = image -> {
             events.add("generate");
             throw new ProviderFailureException("5xx");
         };

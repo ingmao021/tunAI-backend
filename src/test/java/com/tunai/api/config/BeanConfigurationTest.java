@@ -12,7 +12,8 @@ class BeanConfigurationTest {
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withUserConfiguration(GeneratorConfiguration.class, ClockConfiguration.class, BeanConfiguration.class)
-            .withBean(MeterRegistry.class, SimpleMeterRegistry::new);
+            .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
+            .withPropertyValues("tunai.tripo.api-key=tsk_test-0123456789");
 
     @Test
     void multipartLimitsDeriveFromTheImageLimit() {

@@ -2,21 +2,17 @@ package com.tunai.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.tunai.api.adapter.out.fake.FakeModelGenerator;
+import com.tunai.api.adapter.out.tripo.TripoAdapter;
 import com.tunai.api.application.port.out.ModelGeneratorPort;
-import com.tunai.api.domain.model.GenerationOptions;
-import com.tunai.api.domain.model.ImageFormat;
-import com.tunai.api.domain.model.VehicleImage;
-import java.io.IOException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 
-@SpringBootTest(properties = "tunai.generator.fake.delay=0s")
+/** Arranca el contexto completo con una clave de prueba; ninguna prueba genera, así que no se llama a Tripo. */
+@SpringBootTest(properties = "tunai.tripo.api-key=tsk_test-0123456789")
 @AutoConfigureMockMvc
 class TunaiApiApplicationTests {
 
@@ -51,11 +47,7 @@ class TunaiApiApplicationTests {
     }
 
     @Test
-    void defaultProviderIsFakeAndServesTheBundledGlb() throws IOException {
-        assertThat(modelGenerator).isInstanceOf(FakeModelGenerator.class);
-
-        VehicleImage image = new VehicleImage(new byte[] {1}, ImageFormat.JPEG, 512, 512);
-        assertThat(modelGenerator.generate(image, GenerationOptions.DEFAULTS).sizeInBytes())
-                .isEqualTo(new ClassPathResource("fake/vehicle-sample.glb").contentLength());
+    void theGeneratorIsTripo() {
+        assertThat(modelGenerator).isInstanceOf(TripoAdapter.class);
     }
 }

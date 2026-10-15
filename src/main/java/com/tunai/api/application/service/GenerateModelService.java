@@ -6,7 +6,6 @@ import com.tunai.api.application.port.out.ModelGeneratorPort;
 import com.tunai.api.application.port.out.QuotaStorePort;
 import com.tunai.api.domain.exception.ProviderFailureException;
 import com.tunai.api.domain.model.GeneratedModel;
-import com.tunai.api.domain.model.GenerationOptions;
 import com.tunai.api.domain.model.QuotaReservation;
 import com.tunai.api.domain.model.QuotaStatus;
 import java.util.Objects;
@@ -20,19 +19,16 @@ public class GenerateModelService implements GenerateModelUseCase {
     private final ConcurrencyLimiterPort concurrency;
     private final QuotaStorePort quota;
     private final ModelGeneratorPort generator;
-    private final GenerationOptions options;
     private final long maxModelBytes;
 
     public GenerateModelService(
             ConcurrencyLimiterPort concurrency,
             QuotaStorePort quota,
             ModelGeneratorPort generator,
-            GenerationOptions options,
             long maxModelBytes) {
         this.concurrency = Objects.requireNonNull(concurrency, "concurrency");
         this.quota = Objects.requireNonNull(quota, "quota");
         this.generator = Objects.requireNonNull(generator, "generator");
-        this.options = Objects.requireNonNull(options, "options");
         if (maxModelBytes <= 0) {
             throw new IllegalArgumentException("maxModelBytes debe ser positivo: " + maxModelBytes);
         }
@@ -46,7 +42,7 @@ public class GenerateModelService implements GenerateModelUseCase {
             QuotaReservation reservation = quota.tryReserve(command.installationId(), command.clientIp());
             boolean committed = false;
             try {
-                GeneratedModel model = generator.generate(command.image(), options);
+                GeneratedModel model = generator.generate(command.image());
                 checkSize(model);
                 QuotaStatus status = quota.commit(reservation);
                 committed = true;

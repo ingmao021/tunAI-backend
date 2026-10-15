@@ -5,7 +5,6 @@ import com.tunai.api.domain.exception.ProviderRejectedException;
 import com.tunai.api.domain.exception.ProviderTimeoutException;
 import com.tunai.api.domain.exception.ProviderUnavailableException;
 import com.tunai.api.domain.model.GeneratedModel;
-import com.tunai.api.domain.model.GenerationOptions;
 import com.tunai.api.domain.model.VehicleImage;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -39,11 +38,11 @@ public final class MeteredModelGenerator implements ModelGeneratorPort {
     }
 
     @Override
-    public GeneratedModel generate(VehicleImage image, GenerationOptions options) {
+    public GeneratedModel generate(VehicleImage image) {
         Timer.Sample sample = Timer.start(registry);
         String result = "error";
         try {
-            GeneratedModel model = delegate.generate(image, options);
+            GeneratedModel model = delegate.generate(image);
             result = "success";
             return model;
         } catch (RuntimeException e) {

@@ -23,7 +23,6 @@ import com.tunai.api.domain.exception.ProviderRejectedException;
 import com.tunai.api.domain.exception.ProviderTimeoutException;
 import com.tunai.api.domain.exception.ProviderUnavailableException;
 import com.tunai.api.domain.model.GeneratedModel;
-import com.tunai.api.domain.model.GenerationOptions;
 import com.tunai.api.domain.model.ImageFormat;
 import com.tunai.api.domain.model.VehicleImage;
 import java.net.URI;
@@ -42,8 +41,12 @@ class TripoAdapterTest {
     private static final String MODEL_PATH = "/cdn/output/model_pbr.glb";
     private static final byte[] GLB = glb(64);
     private static final VehicleImage JPEG = new VehicleImage(TestImages.jpeg(640, 512), ImageFormat.JPEG, 640, 512);
-    private static final TripoOptions OPTIONS =
-            new TripoOptions("v3.1-20260211", 50_000, TripoOptions.TextureQuality.STANDARD, true);
+    private static final TripoOptions OPTIONS = new TripoOptions(
+            "v3.1-20260211",
+            200_000,
+            TripoOptions.TextureQuality.DETAILED,
+            TripoOptions.GeometryQuality.STANDARD,
+            true);
 
     @RegisterExtension
     static WireMockExtension tripo = WireMockExtension.newInstance()
@@ -139,7 +142,7 @@ class TripoAdapterTest {
                         .withBody(task("success", "{\"model_url\":\"" + modelUrl() + "\"}"))));
         modelReturns(GLB);
 
-        GeneratedModel model = adapter().generate(JPEG, GenerationOptions.DEFAULTS);
+        GeneratedModel model = adapter().generate(JPEG);
 
         assertThat(model.toByteArray()).isEqualTo(GLB);
         tripo.verify(postRequestedFor(urlEqualTo("/v3/files"))
@@ -151,7 +154,8 @@ class TripoAdapterTest {
         tripo.verify(postRequestedFor(urlEqualTo("/v3/generation/image-to-model"))
                 .withHeader("Authorization", equalTo("Bearer " + API_KEY))
                 .withRequestBody(equalToJson("{\"input\":\"file_abc123\",\"model\":\"v3.1-20260211\",\"texture\":true,"
-                        + "\"pbr\":true,\"texture_quality\":\"standard\",\"face_limit\":50000}")));
+                        + "\"pbr\":true,\"texture_quality\":\"detailed\",\"geometry_quality\":\"standard\","
+                        + "\"face_limit\":200000}")));
         tripo.verify(3, getRequestedFor(urlEqualTo(TASK_URL)));
     }
 
@@ -163,7 +167,7 @@ class TripoAdapterTest {
         taskSucceeds();
         modelReturns(GLB);
 
-        adapter().generate(JPEG, GenerationOptions.DEFAULTS);
+        adapter().generate(JPEG);
 
         tripo.verify(getRequestedFor(urlEqualTo(MODEL_PATH)).withHeader("Authorization", absent()));
     }
@@ -174,7 +178,7 @@ class TripoAdapterTest {
         createOk();
         json("GET", TASK_URL, 200, task("banned", null));
 
-        assertThatThrownBy(() -> adapter().generate(JPEG, GenerationOptions.DEFAULTS))
+        assertThatThrownBy(() -> adapter().generate(JPEG))
                 .isInstanceOf(ProviderRejectedException.class)
                 .hasMessageContaining(TASK);
     }
@@ -185,8 +189,7 @@ class TripoAdapterTest {
         createOk();
         json("GET", TASK_URL, 200, task("failed", null));
 
-        assertThatThrownBy(() -> adapter().generate(JPEG, GenerationOptions.DEFAULTS))
-                .isInstanceOf(ProviderFailureException.class);
+        assertThatThrownBy(() -> adapter().generate(JPEG)).isInstanceOf(ProviderFailureException.class);
     }
 
     @Test
@@ -194,8 +197,7 @@ class TripoAdapterTest {
         uploadOk();
         json("POST", "/v3/generation/image-to-model", 400, "{\"code\":2008,\"message\":\"Content policy violation\"}");
 
-        assertThatThrownBy(() -> adapter().generate(JPEG, GenerationOptions.DEFAULTS))
-                .isInstanceOf(ProviderRejectedException.class);
+        assertThatThrownBy(() -> adapter().generate(JPEG)).isInstanceOf(ProviderRejectedException.class);
     }
 
     /** Sin créditos o con la clave inválida el servicio no está disponible para nosotros; nunca llega a la tarea. */
@@ -204,8 +206,7 @@ class TripoAdapterTest {
         uploadOk();
         json("POST", "/v3/generation/image-to-model", 403, "{\"code\":2010,\"message\":\"Insufficient credits\"}");
 
-        assertThatThrownBy(() -> adapter().generate(JPEG, GenerationOptions.DEFAULTS))
-                .isInstanceOf(ProviderUnavailableException.class);
+        assertThatThrownBy(() -> adapter().generate(JPEG)).isInstanceOf(ProviderUnavailableException.class);
         tripo.verify(0, getRequestedFor(urlEqualTo(TASK_URL)));
     }
 
@@ -213,7 +214,7 @@ class TripoAdapterTest {
     void anInvalidKeyMakesTheServiceUnavailable() {
         json("POST", "/v3/files", 401, "{\"code\":2,\"status\":\"error\",\"message\":\"Authentication required\"}");
 
-        assertThatThrownBy(() -> adapter().generate(JPEG, GenerationOptions.DEFAULTS))
+        assertThatThrownBy(() -> adapter().generate(JPEG))
                 .isInstanceOf(ProviderUnavailableException.class)
                 .hasMessageNotContaining(API_KEY);
     }
@@ -228,7 +229,7 @@ class TripoAdapterTest {
                         .withHeader("Retry-After", "7")
                         .withBody("{\"code\":2000,\"message\":\"You have exceeded the limit of generation\"}")));
 
-        assertThatThrownBy(() -> adapter().generate(JPEG, GenerationOptions.DEFAULTS))
+        assertThatThrownBy(() -> adapter().generate(JPEG))
                 .isInstanceOf(ProviderUnavailableException.class)
                 .satisfies(e -> assertThat(((DomainException) e).retryAfter()).contains(Duration.ofSeconds(7)));
     }
@@ -241,7 +242,7 @@ class TripoAdapterTest {
         json("GET", TASK_URL, 200, task("running", null));
 
         assertThatThrownBy(() -> adapter(Duration.ofSeconds(5), Duration.ofMillis(200), 1024)
-                        .generate(JPEG, GenerationOptions.DEFAULTS))
+                        .generate(JPEG))
                 .isInstanceOf(ProviderTimeoutException.class)
                 .hasMessageContaining(TASK);
         tripo.verify(1, postRequestedFor(urlEqualTo("/v3/generation/image-to-model")));
@@ -256,7 +257,7 @@ class TripoAdapterTest {
                         .withBody(ok("{\"file_token\":\"file_abc123\"}"))));
 
         assertThatThrownBy(() -> adapter(Duration.ofMillis(300), Duration.ofSeconds(5), 1024)
-                        .generate(JPEG, GenerationOptions.DEFAULTS))
+                        .generate(JPEG))
                 .isInstanceOf(ProviderTimeoutException.class);
     }
 
@@ -266,8 +267,7 @@ class TripoAdapterTest {
         createOk();
         json("GET", TASK_URL, 500, "{\"code\":5000,\"message\":\"Internal error\"}");
 
-        assertThatThrownBy(() -> adapter().generate(JPEG, GenerationOptions.DEFAULTS))
-                .isInstanceOf(ProviderFailureException.class);
+        assertThatThrownBy(() -> adapter().generate(JPEG)).isInstanceOf(ProviderFailureException.class);
     }
 
     @Test
@@ -276,7 +276,7 @@ class TripoAdapterTest {
         createOk();
         json("GET", TASK_URL, 200, task("success", "{\"rendered_image_url\":\"https://cdn.example/p.png\"}"));
 
-        assertThatThrownBy(() -> adapter().generate(JPEG, GenerationOptions.DEFAULTS))
+        assertThatThrownBy(() -> adapter().generate(JPEG))
                 .isInstanceOf(ProviderFailureException.class)
                 .hasMessageContaining("URL de modelo");
     }
@@ -288,7 +288,7 @@ class TripoAdapterTest {
         taskSucceeds();
         modelReturns(glb(2048));
 
-        assertThatThrownBy(() -> adapter().generate(JPEG, GenerationOptions.DEFAULTS))
+        assertThatThrownBy(() -> adapter().generate(JPEG))
                 .isInstanceOf(ProviderFailureException.class)
                 .hasMessageContaining("RF-BE-013");
     }
@@ -300,8 +300,7 @@ class TripoAdapterTest {
         taskSucceeds();
         modelReturns(Arrays.copyOf("<html>".getBytes(StandardCharsets.US_ASCII), 64));
 
-        assertThatThrownBy(() -> adapter().generate(JPEG, GenerationOptions.DEFAULTS))
-                .isInstanceOf(ProviderFailureException.class);
+        assertThatThrownBy(() -> adapter().generate(JPEG)).isInstanceOf(ProviderFailureException.class);
     }
 
     @Test
@@ -311,7 +310,7 @@ class TripoAdapterTest {
         taskSucceeds();
         tripo.stubFor(get(urlEqualTo(MODEL_PATH)).willReturn(aResponse().withStatus(403)));
 
-        assertThatThrownBy(() -> adapter().generate(JPEG, GenerationOptions.DEFAULTS))
+        assertThatThrownBy(() -> adapter().generate(JPEG))
                 .isInstanceOf(ProviderFailureException.class)
                 .hasMessageContaining("403");
     }
@@ -320,8 +319,7 @@ class TripoAdapterTest {
     void aSuccessfulHttpResponseWithAnErrorCodeIsTranslated() {
         json("POST", "/v3/files", 200, "{\"code\":2004,\"message\":\"Unsupported file type\"}");
 
-        assertThatThrownBy(() -> adapter().generate(JPEG, GenerationOptions.DEFAULTS))
-                .isInstanceOf(ProviderRejectedException.class);
+        assertThatThrownBy(() -> adapter().generate(JPEG)).isInstanceOf(ProviderRejectedException.class);
     }
 
     @Test
@@ -329,8 +327,7 @@ class TripoAdapterTest {
         tripo.stubFor(post(urlEqualTo("/v3/files"))
                 .willReturn(aResponse().withStatus(502).withBody("<html>Bad gateway</html>")));
 
-        assertThatThrownBy(() -> adapter().generate(JPEG, GenerationOptions.DEFAULTS))
-                .isInstanceOf(ProviderFailureException.class);
+        assertThatThrownBy(() -> adapter().generate(JPEG)).isInstanceOf(ProviderFailureException.class);
     }
 
     @Test
@@ -341,7 +338,7 @@ class TripoAdapterTest {
         modelReturns(GLB);
         VehicleImage png = new VehicleImage(TestImages.png(512, 512), ImageFormat.PNG, 512, 512);
 
-        adapter().generate(png, GenerationOptions.DEFAULTS);
+        adapter().generate(png);
 
         tripo.verify(postRequestedFor(urlEqualTo("/v3/files"))
                 .withRequestBodyPart(aMultipart()

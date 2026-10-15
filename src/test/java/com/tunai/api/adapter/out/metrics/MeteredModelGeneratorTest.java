@@ -9,7 +9,6 @@ import com.tunai.api.domain.exception.ProviderRejectedException;
 import com.tunai.api.domain.exception.ProviderTimeoutException;
 import com.tunai.api.domain.exception.ProviderUnavailableException;
 import com.tunai.api.domain.model.GeneratedModel;
-import com.tunai.api.domain.model.GenerationOptions;
 import com.tunai.api.domain.model.ImageFormat;
 import com.tunai.api.domain.model.VehicleImage;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -30,20 +29,20 @@ class MeteredModelGeneratorTest {
 
     private double generations(String result) {
         var counter = registry.find(MeteredModelGenerator.GENERATIONS)
-                .tags("provider", "stability", "result", result)
+                .tags("provider", "tripo", "result", result)
                 .counter();
         return counter == null ? 0 : counter.count();
     }
 
     @Test
     void countsAndTimesASuccess() {
-        ModelGeneratorPort ok = (image, options) -> GeneratedModel.fromGlb(GLB);
+        ModelGeneratorPort ok = image -> GeneratedModel.fromGlb(GLB);
 
-        new MeteredModelGenerator(ok, registry, "STABILITY").generate(IMAGE, GenerationOptions.DEFAULTS);
+        new MeteredModelGenerator(ok, registry, "TRIPO").generate(IMAGE);
 
         assertThat(generations("success")).isEqualTo(1);
         assertThat(registry.get(MeteredModelGenerator.LATENCY)
-                        .tags("provider", "stability", "result", "success")
+                        .tags("provider", "tripo", "result", "success")
                         .timer()
                         .count())
                 .isEqualTo(1);
@@ -62,12 +61,11 @@ class MeteredModelGeneratorTest {
     @MethodSource("failures")
     void classifiesFailuresAndRethrows(Supplier<RuntimeException> failure, String result) {
         RuntimeException thrown = failure.get();
-        ModelGeneratorPort failing = (image, options) -> {
+        ModelGeneratorPort failing = image -> {
             throw thrown;
         };
 
-        assertThatThrownBy(() -> new MeteredModelGenerator(failing, registry, "stability")
-                        .generate(IMAGE, GenerationOptions.DEFAULTS))
+        assertThatThrownBy(() -> new MeteredModelGenerator(failing, registry, "tripo").generate(IMAGE))
                 .isSameAs(thrown);
         assertThat(generations(result)).isEqualTo(1);
         assertThat(generations("success")).isZero();

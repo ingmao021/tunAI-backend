@@ -67,7 +67,7 @@
             <version>${archunit.version}</version>
             <scope>test</scope>
         </dependency>
-        <!-- Anexo C: el adaptador de Stability se prueba solo contra WireMock (RN-15) -->
+        <!-- Anexo C: el adaptador de Tripo se prueba solo contra WireMock (RN-15) -->
         <dependency>
             <groupId>org.wiremock</groupId>
             <artifactId>wiremock-standalone</artifactId>

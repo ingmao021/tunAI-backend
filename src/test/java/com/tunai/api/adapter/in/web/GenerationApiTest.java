@@ -1,30 +1,32 @@
 package com.tunai.api.adapter.in.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 import com.tunai.api.TestImages;
+import com.tunai.api.application.port.out.ModelGeneratorPort;
+import com.tunai.api.domain.model.GeneratedModel;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
 
 /**
- * F-BE-01 de extremo a extremo con el proveedor {@code fake} (flujos A1 y A2). Los límites se suben para que la cuota
- * no interfiera; la cuota se prueba en {@link QuotaApiTest}.
+ * F-BE-01 de extremo a extremo con un generador simulado (flujos A1 y A2); el adaptador real de Tripo se prueba en
+ * {@link TripoGenerationApiTest}. Los límites se suben para que la cuota no interfiera; la cuota se prueba en
+ * {@link QuotaApiTest}.
  */
 @SpringBootTest(
-        properties = {
-            "tunai.generator.fake.delay=0s",
-            "tunai.quota.initial-credits=15000",
-            "tunai.quota.per-ip=1000",
-            "tunai.quota.global-daily=1000"
-        })
+        properties = {"tunai.quota.initial-credits=15000", "tunai.quota.per-ip=1000", "tunai.quota.global-daily=1000"})
 @AutoConfigureMockMvc
 class GenerationApiTest {
 
@@ -37,6 +39,15 @@ class GenerationApiTest {
     @Autowired
     MeterRegistry meterRegistry;
 
+    @MockitoBean
+    ModelGeneratorPort generator;
+
+    @BeforeEach
+    void stubGenerator() {
+        when(generator.generate(any()))
+                .thenReturn(GeneratedModel.fromGlb("glTF-model".getBytes(StandardCharsets.US_ASCII)));
+    }
+
     /**
      * El registro publica por intervalos ({@code count()} devuelve el intervalo anterior), así que aquí se verifica que
      * los medidores existan con sus etiquetas; el conteo exacto lo prueba {@code MeteredModelGeneratorTest}.
@@ -47,12 +58,12 @@ class GenerationApiTest {
 
         assertThat(meterRegistry
                         .find("tunai.generations")
-                        .tags("provider", "fake", "result", "success")
+                        .tags("provider", "tripo", "result", "success")
                         .counter())
                 .isNotNull();
         assertThat(meterRegistry
                         .find("tunai.provider.latency")
-                        .tags("provider", "fake", "result", "success")
+                        .tags("provider", "tripo", "result", "success")
                         .timer())
                 .isNotNull();
     }

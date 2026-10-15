@@ -32,7 +32,7 @@ build/
 ### VS Code ###
 .vscode/
 
-### Secretos (STABILITY_API_KEY y similares; RNF-BE-006) ###
+### Secretos (TRIPO_API_KEY y similares; RNF-BE-006) ###
 .env
 .env.*
 !.env.example

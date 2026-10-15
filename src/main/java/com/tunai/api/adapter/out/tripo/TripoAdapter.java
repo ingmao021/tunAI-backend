@@ -4,7 +4,6 @@ import com.tunai.api.application.port.out.ModelGeneratorPort;
 import com.tunai.api.domain.exception.ProviderFailureException;
 import com.tunai.api.domain.exception.ProviderTimeoutException;
 import com.tunai.api.domain.model.GeneratedModel;
-import com.tunai.api.domain.model.GenerationOptions;
 import com.tunai.api.domain.model.VehicleImage;
 import java.io.IOException;
 import java.io.InputStream;
@@ -45,8 +44,8 @@ import tools.jackson.databind.node.ObjectNode;
  * </ol>
  *
  * <p>Nunca se reintenta la creación de la tarea (RN-13). Si se agota {@code maxWait}, la tarea puede terminar igual
- * en Tripo y cobrar sus créditos; por eso su {@code task_id} queda en el log. Los {@link GenerationOptions} son de
- * Stable Fast 3D y se ignoran: los parámetros de Tripo vienen en {@link TripoOptions}.
+ * en Tripo y cobrar sus créditos; por eso su {@code task_id} queda en el log. Los parámetros de la tarea vienen en
+ * {@link TripoOptions}.
  */
 public final class TripoAdapter implements ModelGeneratorPort {
 
@@ -108,7 +107,7 @@ public final class TripoAdapter implements ModelGeneratorPort {
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalArgumentException("Falta la clave de Tripo");
         }
-        // HTTP/1.1 por la misma razón que en Stability: el upgrade h2c falla con algunos servidores
+        // HTTP/1.1: el upgrade h2c del cliente del JDK falla con algunos servidores
         HttpClient httpClient = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Objects.requireNonNull(connectTimeout, "connectTimeout"))
@@ -128,7 +127,7 @@ public final class TripoAdapter implements ModelGeneratorPort {
     }
 
     @Override
-    public GeneratedModel generate(VehicleImage image, GenerationOptions ignored) {
+    public GeneratedModel generate(VehicleImage image) {
         Objects.requireNonNull(image, "image");
         long deadline = System.nanoTime() + maxWait.toNanos();
         try {
@@ -189,6 +188,7 @@ public final class TripoAdapter implements ModelGeneratorPort {
                 .put("texture", true)
                 .put("pbr", options.pbr())
                 .put("texture_quality", options.textureQuality().apiValue())
+                .put("geometry_quality", options.geometryQuality().apiValue())
                 .put("face_limit", options.faceLimit());
         JsonNode data = api.post()
                 .uri(IMAGE_TO_MODEL_PATH)

@@ -49,9 +49,12 @@ class ArchitectureTest {
     @ArchTest
     static final ArchRule outboundAdaptersDoNotDependOnEachOther = noClasses()
             .that()
-            .resideInAPackage("com.tunai.api.adapter.out.fake..")
+            .resideInAPackage("com.tunai.api.adapter.out.tripo..")
             .should()
             .dependOnClassesThat()
-            .resideInAnyPackage("com.tunai.api.adapter.out.stability..", "com.tunai.api.adapter.out.quota..")
+            .resideInAnyPackage(
+                    "com.tunai.api.adapter.out.quota..",
+                    "com.tunai.api.adapter.out.concurrency..",
+                    "com.tunai.api.adapter.out.metrics..")
             .allowEmptyShould(true);
 }
