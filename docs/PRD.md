@@ -4,7 +4,7 @@
 |---|---|
 | Producto | TunAI — visualización y personalización virtual de vehículos en 3D |
 | Componente | API intermediaria de generación 3D (repositorio **backend**) |
-| Versión del documento | 1.9 |
+| Versión del documento | 1.10 |
 | Fecha | 2026-10-14 (v1.0: 2026-10-03) |
 | Autor | Anderson |
 | Estado | Aprobado para MVP (con puntos **PENDIENTE DE DEFINIR / VALIDAR**) |
@@ -30,8 +30,8 @@
 | 1.6 | 2026-10-09 | Métricas `tunai.generations` y `tunai.provider.latency` publicadas en el log; Checkstyle en el build |
 | 1.7 | 2026-10-10 | El GLB del adaptador `fake` pasa a ser una salida real de Stable Fast 3D (código abierto, en local) con el mismo formato que la API; Car Concept tenía 97 mallas y el visor lo rechazaba, así que el flujo completo no se podía probar sin gastar créditos (RF-BE-021) |
 | 1.8 | 2026-10-10 | Ensayo real con SF3D superado (GLB de 877 KB aceptado por el visor), pero con calidad insuficiente para la demo. Nuevo proveedor principal **Tripo API v3** (§2.1.1, RF-BE-024, §13.9) con presupuesto mínimo de pago (RN-17); Stability queda como respaldo. Variables `TRIPO_API_KEY` y `TUNAI_TRIPO_*` (Anexo A), checklist de Tripo (Anexo E), riesgos R-BE-13 y R-BE-14, pregunta P-BE-10 |
-| 1.9 | 2026-10-14 | **Tripo es el único proveedor**: se eliminan los adaptadores `stability` y `fake`, `GenerationOptions` y `tunai.generator.*`; la app no arranca sin `TRIPO_API_KEY` (RNF-BE-015). Parámetros elegidos tras una prueba en Tripo Studio: textura `detailed` (4K) + PBR, geometría `standard`, 200.000 caras = 40 créditos por modelo (§2.1.1, §13.9). Nueva variable `TUNAI_TRIPO_GEOMETRY_QUALITY`; `max-model-bytes` sube a 50 MB. Los tests usan WireMock o un generador simulado (RN-15) |
 | 1.9 | 2026-10-11 | Créditos por instalación (RN-02): 45 al instalar, 15 por modelo, sin renovación diaria. Sin créditos para otro modelo → `402 INSUFFICIENT_CREDITS` (sin `Retry-After`) y el cliente ofrece los planes. `GET /api/v1/quota` y los headers informan el saldo (`credits`, `creditsPerModel`, `X-Credits-Balance`, `X-Credits-Per-Model`). Los límites diarios por IP y global no cambian. `TUNAI_QUOTA_PER_INSTALLATION` se reemplaza por `TUNAI_CREDITS_INITIAL` y `TUNAI_CREDITS_PER_MODEL` |
+| 1.10 | 2026-10-14 | **Tripo es el único proveedor**: se eliminan los adaptadores `stability` y `fake`, `GenerationOptions` y `tunai.generator.*`; la app no arranca sin `TRIPO_API_KEY` (RNF-BE-015). Parámetros elegidos tras una prueba en Tripo Studio: textura `detailed` (4K) + PBR, geometría `standard`, 200.000 caras = 40 créditos por modelo (§2.1.1, §13.9). Nueva variable `TUNAI_TRIPO_GEOMETRY_QUALITY`; `max-model-bytes` sube a 50 MB. Los tests usan WireMock o un generador simulado (RN-15) |
 
 **Convenciones:** igual que el PRD del frontend.
 - Prioridad MoSCoW (Must, Should, Could, Won't).
@@ -81,7 +81,7 @@ Sin backend, la clave de Stability tendría que ir dentro de la app y cualquiera
 ## 2. Investigación y contexto
 
 ### 2.1 Proveedor hasta v1.8: Stable Fast 3D (API Stability AI)
-> **Histórico.** El adaptador de Stability se eliminó en v1.9; esta sección queda como registro de la decisión inicial.
+> **Histórico.** El adaptador de Stability se eliminó en v1.10; esta sección queda como registro de la decisión inicial.
 
 - **Endpoint:** `POST https://api.stability.ai/v2beta/3d/stable-fast-3d` (multipart).
 - **Autenticación:** `Authorization: Bearer <API_KEY>`.
@@ -99,7 +99,7 @@ Sin backend, la clave de Stability tendría que ir dentro de la app y cualquiera
 - **Licencia del modelo:** Stability AI Community License; gratuita para uso comercial con ingresos < 1 M USD/año. Términos específicos de las salidas de la API: **PENDIENTE DE VALIDAR**.
 - **Repositorio de referencia del modelo** (comportamiento, parámetros, licencia): **https://github.com/Stability-AI/stable-fast-3d.git**. El backend **no** ejecuta este código; consume la API alojada. El repositorio se usa como documentación técnica.
 
-### 2.1.1 Proveedor único desde v1.9: Tripo API v3
+### 2.1.1 Proveedor único desde v1.10: Tripo API v3
 - **Motivo del cambio:** el ensayo con SF3D del 2026-10-10 funcionó de punta a punta, pero el modelo se ve como "cartón arrugado" (unos 22 mil triángulos y textura de 1024). La misma foto en la web de Tripo dio un resultado claramente mejor. El visor no era la causa: usa las normales del GLB.
 - **Base y autenticación:** `https://openapi.tripo3d.ai/v3`, `Authorization: Bearer <TRIPO_API_KEY>`. La v2 (`api.tripo3d.ai/v2/openapi`) se está retirando; las claves sirven para las dos.
 - **Flujo asíncrono:**
@@ -109,7 +109,7 @@ Sin backend, la clave de Stability tendría que ir dentro de la app y cualquiera
   4. el GLB se descarga de `output.model_url` (CDN, sin la clave).
 - **Respuestas:** `{"code": 0, "data": {...}}`; los errores traen `code`, `message` y `suggestion`. El catálogo es público (§13.9).
 - **Costo:** 30 créditos por imagen a 3D con textura estándar; textura HD +10, geometría HD +20. El precio por crédito que muestra el panel (0,001 USD) no coincide con el de la documentación (0,01 USD): se confirma al recargar. Tripo congela los créditos al crear la tarea y solo los cobra si termina bien.
-- **Configuración elegida (v1.9):** una prueba en Tripo Studio con malla ultra, textura 4K, PBR y 2 millones de caras gustó, pero cuesta ~60 créditos, genera un GLB de decenas de MB y tarda más de lo que permite el proxy. Se eligió un punto intermedio: textura `detailed` (4K, +10), geometría `standard`, PBR y 200.000 caras = **40 créditos** por modelo. La recarga de 1 USD dio 100 créditos (1 crédito = 0,01 USD), es decir, 2 generaciones.
+- **Configuración elegida (v1.10):** una prueba en Tripo Studio con malla ultra, textura 4K, PBR y 2 millones de caras gustó, pero cuesta ~60 créditos, genera un GLB de decenas de MB y tarda más de lo que permite el proxy. Se eligió un punto intermedio: textura `detailed` (4K, +10), geometría `standard`, PBR y 200.000 caras = **40 créditos** por modelo. La recarga de 1 USD dio 100 créditos (1 crédito = 0,01 USD), es decir, 2 generaciones.
 - **Créditos gratis:** la documentación menciona 300 para cuentas nuevas, pero la cuenta del proyecto arrancó con saldo 0 (verificado con `GET /v3/account/balance`). Hace falta una recarga (RN-17).
 - **Formato:** GLB con PBR (color base, metálico/rugosidad y normales). Que el visor lo acepte (1 malla, 1 primitiva, sin extensiones obligatorias) se valida con la primera generación pagada (R-BE-13).
 - **Documentación:** https://developers.tripo3d.ai/en/docs (índice para máquinas en `/llms.txt`; cada página tiene versión `.md`).
@@ -279,7 +279,7 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RF-BE-018 | No escribir imágenes ni modelos en disco; procesarlos solo en memoria. Por defecto Tomcat guarda los archivos multipart en disco temporal: se configura `spring.servlet.multipart.file-size-threshold` igual a `max-file-size` para que queden en memoria (cuenta contra RNF-BE-003) | Must |
 | RF-BE-019 | Documentar la API con OpenAPI (springdoc), habilitado solo en el perfil `dev` | Should |
 | RF-BE-020 | Antes de generar, consultar el saldo de créditos de Stability y responder `503` si es insuficiente (endpoint de saldo **PENDIENTE DE VALIDAR**) | Could |
-| RF-BE-021 | ~~Adaptador `fake` de `ModelGeneratorPort`~~ **Retirado en v1.9**: Tripo es el único proveedor. Las pruebas automáticas usan WireMock (`TripoAdapterTest`, `TripoGenerationApiTest`) o un `ModelGeneratorPort` simulado | — |
+| RF-BE-021 | ~~Adaptador `fake` de `ModelGeneratorPort`~~ **Retirado en v1.10**: Tripo es el único proveedor. Las pruebas automáticas usan WireMock (`TripoAdapterTest`, `TripoGenerationApiTest`) o un `ModelGeneratorPort` simulado | — |
 | RF-BE-022 | Obtener la IP real del cliente, en este orden: (1) el header de confianza del proxy de borde (`CF-Connecting-IP`: Render va detrás de Cloudflare, que lo sobrescribe); (2) el valor de `X-Forwarded-For` que agregó el primero de N proxies de confianza contando desde la derecha (N configurable, por defecto 1), **nunca** el primero de la lista, que lo controla el cliente; (3) la IP de la conexión | Must |
 | RF-BE-023 | Generar un `traceId` por petición (filtro web, guardado en el MDC de los logs), devolverlo en el header `X-Trace-Id` y en el campo `traceId` de los errores | Must |
 | RF-BE-024 | Proveer un adaptador `tripo` de `ModelGeneratorPort` sobre Tripo API v3 (§13.9): sube la foto, crea la tarea, la consulta hasta un estado final o hasta `max-wait`, y descarga el GLB sin enviar la clave al CDN. Se elige con `tunai.generator.provider=tripo` y exige `TRIPO_API_KEY` al arrancar | Must |
@@ -323,7 +323,7 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RN-14 | **Limitación aceptada:** la cuota vive en memoria; un reinicio o apagado del servicio la reinicia. El tope real de gasto es el **saldo de créditos** (25 gratuitos, sin compras): al agotarse, Stability rechaza la llamada y el backend responde `503 SERVICE_UNAVAILABLE` (A9) |
 | RN-15 | Las pruebas automáticas **no hacen llamadas reales** al proveedor: usan WireMock o un generador simulado. Cada generación real gasta 40 créditos y se planifica (primera prueba, demo) |
 | RN-16 | Solo se envían al proveedor fotos que contengan un **vehículo**. SF3D no lo verifica: modela el objeto principal de cualquier foto y cobra la generación. La verificación la hace el **cliente** con un clasificador de imágenes local antes de enviar (ver `HANDOFF-Frontend-UI.md` §5.3.1). **Limitación aceptada:** el backend no la repite, por la RAM de Render (512 MB) y porque el único cliente es la app oficial; un cliente alterado podría saltarla, y el gasto queda acotado por la cuota (RN-02, RN-10, RN-11) |
-| RN-17 | **Presupuesto de Tripo (v1.9):** recarga de 1 USD = 100 créditos = 2 generaciones de 40 créditos (primera prueba y demo). La cuota (RF-BE-015) limita el gasto en Render: 2 por IP y 2 global por día |
+| RN-17 | **Presupuesto de Tripo (v1.10):** recarga de 1 USD = 100 créditos = 2 generaciones de 40 créditos (primera prueba y demo). La cuota (RF-BE-015) limita el gasto en Render: 2 por IP y 2 global por día |
 
 ---
 
@@ -431,7 +431,7 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
 - **Consecuencia aceptada (RN-14):** un reinicio la vacía. Como Render apaga el servicio tras 15 minutos sin tráfico, el límite global diario **no** es un tope confiable: el tope real es el saldo de créditos (25 gratuitos).
 - **Camino de evolución:** implementar `QuotaStorePort` con un almacén persistente (por ejemplo, Redis o Postgres) **sin cambios** en dominio, aplicación ni web. Los tests de contrato del puerto garantizan el mismo comportamiento.
 
-### 13.7 Comunicación con Stability (histórico, retirado en v1.9)
+### 13.7 Comunicación con Stability (histórico, retirado en v1.10)
 - `RestClient` de Spring (síncrono; una petición por hilo es suficiente con concurrencia ≤ 2), con los timeouts de RNF-BE-002.
 - Cuerpo multipart con `image`, `texture_resolution`, `foreground_ratio` y `remesh`.
 - **Cliente:** HTTP/1.1 explícito (una subida por petición no gana nada con HTTP/2 y el *upgrade* h2c falla con algunos servidores). El multipart se arma a mano: en Spring 7, `MultipartBodyBuilder` depende de Reactive Streams, que la app no incluye.
@@ -460,7 +460,7 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
   - timeouts de red o de `max-wait` → `ProviderTimeoutException` (504).
 
 ### 13.8 Cuota y gasto de créditos
-- Desde v1.9 no hay proveedor `fake`: **cualquier generación exitosa gasta créditos de Tripo**, también en local. La cuota es el único freno del gasto en Render; las pruebas automáticas usan WireMock o un generador simulado.
+- Desde v1.10 no hay proveedor `fake`: **cualquier generación exitosa gasta créditos de Tripo**, también en local. La cuota es el único freno del gasto en Render; las pruebas automáticas usan WireMock o un generador simulado.
 - Los límites por defecto (2 por IP y 2 global por día) equivalen al saldo (2 generaciones de 40 créditos). Subirlos solo tiene sentido después de recargar.
 - Al arrancar, el backend registra en el log el proveedor activo y los límites efectivos. Si el límite global es mayor que 2, lo registra como advertencia (WARN).
 - Volver los límites a 2 forma parte del checklist del ensayo (Anexo E).
@@ -797,7 +797,7 @@ ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 
 ## Anexo E — Checklist de ensayo y demo
 
-**Tripo (único proveedor desde v1.9; 40 créditos por generación):**
+**Tripo (único proveedor desde v1.10; 40 créditos por generación):**
 1. Confirmar el saldo en el panel de Tripo (≥ 40 créditos por generación planificada).
 2. En Render → *Environment*: `TRIPO_API_KEY` configurada a mano con **Save only**, y las cuotas en 2 (`TUNAI_QUOTA_PER_IP`, `TUNAI_QUOTA_GLOBAL_DAILY`).
 3. Confirmar en el log de arranque la línea WARN `Generador TRIPO` con modelo, caras, textura `DETAILED`, geometría `STANDARD` y espera máxima.
