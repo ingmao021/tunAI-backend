@@ -18,9 +18,11 @@ import org.springframework.validation.annotation.Validated;
  * @param apiKey clave de Tripo; nunca se registra ni se muestra (RNF-BE-006)
  * @param faceLimit máximo de caras del modelo; sin límite, v3.1 puede devolver cientos de miles y superar el tamaño
  *     máximo del GLB
+ * @param minBalance créditos de Tripo disponibles que exige cada generación antes de empezar; debe ser al menos lo que
+ *     cuesta un modelo con estos parámetros (40)
  * @param pollInterval cada cuánto se consulta la tarea (Tripo recomienda 1–2 s)
- * @param maxWait espera máxima de la tarea; con la subida y la descarga debe quedar por debajo de los ~100 s del proxy
- *     de Render y de los 120 s del cliente
+ * @param maxWait plazo de toda la generación (saldo, subida, tarea y descarga); debe quedar por debajo de los ~100 s
+ *     del proxy de Render y de los 120 s del cliente
  */
 @Validated
 @ConfigurationProperties("tunai.tripo")
@@ -32,6 +34,7 @@ public record TripoProperties(
         @NotNull @DefaultValue("detailed") TripoOptions.TextureQuality textureQuality,
         @NotNull @DefaultValue("standard") TripoOptions.GeometryQuality geometryQuality,
         @DefaultValue("true") boolean pbr,
+        @Min(0) @DefaultValue("40") int minBalance,
         @NotNull @DefaultValue("10s") Duration connectTimeout,
         @NotNull @DefaultValue("30s") Duration readTimeout,
         @NotNull @DefaultValue("2s") Duration pollInterval,
@@ -50,7 +53,7 @@ public record TripoProperties(
     public String toString() {
         return "TripoProperties[apiKey=" + (hasApiKey() ? "****" : "(vacía)") + ", baseUrl=" + baseUrl + ", model="
                 + model + ", faceLimit=" + faceLimit + ", textureQuality=" + textureQuality
-                + ", geometryQuality=" + geometryQuality + ", pbr=" + pbr
+                + ", geometryQuality=" + geometryQuality + ", pbr=" + pbr + ", minBalance=" + minBalance
                 + ", connectTimeout=" + connectTimeout + ", readTimeout=" + readTimeout + ", pollInterval="
                 + pollInterval + ", maxWait=" + maxWait + "]";
     }

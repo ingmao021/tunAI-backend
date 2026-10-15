@@ -35,9 +35,12 @@ tunai:
     texture-quality: ${TUNAI_TRIPO_TEXTURE_QUALITY:detailed}
     geometry-quality: ${TUNAI_TRIPO_GEOMETRY_QUALITY:standard}
     pbr: ${TUNAI_TRIPO_PBR:true}
+    # Saldo de Tripo que exige cada generación antes de empezar (lo que cuesta un modelo con estos parámetros)
+    min-balance: ${TUNAI_TRIPO_MIN_BALANCE:40}
     connect-timeout: ${TUNAI_TRIPO_CONNECT_TIMEOUT:10s}
     read-timeout: ${TUNAI_TRIPO_READ_TIMEOUT:30s}
     poll-interval: ${TUNAI_TRIPO_POLL_INTERVAL:2s}
+    # Plazo de toda la generación, del saldo a la descarga: debe caber en los ~100 s del proxy de Render
     max-wait: ${TUNAI_TRIPO_MAX_WAIT:85s}
   generation:
     max-model-bytes: ${TUNAI_MAX_MODEL_BYTES:50MB}

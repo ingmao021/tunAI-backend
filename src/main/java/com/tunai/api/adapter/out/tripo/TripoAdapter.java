@@ -1,8 +1,10 @@
 package com.tunai.api.adapter.out.tripo;
 
 import com.tunai.api.application.port.out.ModelGeneratorPort;
+import com.tunai.api.domain.exception.DomainException;
 import com.tunai.api.domain.exception.ProviderFailureException;
 import com.tunai.api.domain.exception.ProviderTimeoutException;
+import com.tunai.api.domain.exception.ProviderUnavailableException;
 import com.tunai.api.domain.model.GeneratedModel;
 import com.tunai.api.domain.model.VehicleImage;
 import java.io.IOException;
@@ -13,10 +15,17 @@ import java.net.http.HttpClient;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -36,22 +45,33 @@ import tools.jackson.databind.node.ObjectNode;
  * Adaptador de Tripo API v3 (§13.9). La generación es asíncrona del lado de Tripo y aquí se vuelve síncrona:
  *
  * <ol>
+ *   <li>{@code GET /account/balance}: si el saldo no alcanza para un modelo, se responde 503 sin crear nada. El saldo
+ *       es el tope real del gasto: la cuota vive en memoria y se reinicia cada vez que Render duerme el servicio.
  *   <li>{@code POST /files}: sube la foto y recibe un {@code file_token}.
  *   <li>{@code POST /generation/image-to-model}: crea la tarea y recibe un {@code task_id}. Aquí Tripo congela los
- *       créditos; solo los cobra si la tarea termina bien.
- *   <li>{@code GET /tasks/{task_id}}: consulta cada {@code pollInterval} hasta un estado final o hasta {@code maxWait}.
- *   <li>Descarga el GLB de {@code output.model_url} (CDN de Tripo, <b>sin</b> la clave).
+ *       créditos; solo los cobra si la tarea termina en {@code success}.
+ *   <li>{@code GET /tasks/{task_id}}: consulta cada {@code pollInterval}; un fallo pasajero se reintenta.
+ *   <li>Descarga el GLB de {@code output.model_url} (CDN de Tripo, <b>sin</b> la clave), con un reintento.
  * </ol>
  *
- * <p>Nunca se reintenta la creación de la tarea (RN-13). Si se agota {@code maxWait}, la tarea puede terminar igual
- * en Tripo y cobrar sus créditos; por eso su {@code task_id} queda en el log. Los parámetros de la tarea vienen en
- * {@link TripoOptions}.
+ * <p>Todo el flujo tiene un plazo duro de {@code maxWait}: corre en un hilo virtual que se cancela al vencer, así una
+ * llamada lenta no deja al cliente esperando más que el proxy de Render. Nunca se reintenta la creación de la tarea
+ * (RN-13). Si algo falla después de crearla (tiempo agotado, consulta o descarga fallida, GLB inválido), Tripo puede
+ * cobrarla igual: la excepción lo indica con {@link DomainException#providerMayHaveCharged()} y su {@code task_id}
+ * queda en el log.
  */
 public final class TripoAdapter implements ModelGeneratorPort {
 
+    static final String BALANCE_PATH = "/account/balance";
     static final String FILES_PATH = "/files";
     static final String IMAGE_TO_MODEL_PATH = "/generation/image-to-model";
     static final String TASK_PATH = "/tasks/{taskId}";
+
+    /** Consultas fallidas seguidas que se toleran antes de abandonar la tarea. */
+    static final int MAX_POLL_FAILURES = 5;
+
+    /** Intentos de descarga del GLB: la URL es de solo lectura, así que repetirla no cobra otra vez. */
+    static final int DOWNLOAD_ATTEMPTS = 2;
 
     private static final Logger log = LoggerFactory.getLogger(TripoAdapter.class);
 
@@ -63,6 +83,7 @@ public final class TripoAdapter implements ModelGeneratorPort {
     private final RestClient api;
     private final RestClient download;
     private final TripoOptions options;
+    private final int minBalance;
     private final Duration pollInterval;
     private final Duration maxWait;
     private final long maxModelBytes;
@@ -72,23 +93,29 @@ public final class TripoAdapter implements ModelGeneratorPort {
     /**
      * @param api cliente con la URL base de la v3, el header {@code Authorization} y timeouts
      * @param download cliente para la URL del GLB; no debe llevar la clave (es otro host)
-     * @param maxWait tiempo máximo esperando la tarea; debe caber en el timeout del cliente y del proxy (§13.9)
+     * @param minBalance créditos disponibles mínimos para empezar una generación (lo que cuesta un modelo)
+     * @param maxWait plazo de toda la generación, del saldo a la descarga; debe caber en los ~100 s del proxy (§13.9)
      * @param maxModelBytes tamaño máximo del GLB; se corta la lectura al superarlo (RF-BE-013)
      */
     public TripoAdapter(
             RestClient api,
             RestClient download,
             TripoOptions options,
+            int minBalance,
             Duration pollInterval,
             Duration maxWait,
             long maxModelBytes) {
         this.api = Objects.requireNonNull(api, "api");
         this.download = Objects.requireNonNull(download, "download");
         this.options = Objects.requireNonNull(options, "options");
+        if (minBalance < 0) {
+            throw new IllegalArgumentException("minBalance no puede ser negativo: " + minBalance);
+        }
+        this.minBalance = minBalance;
         this.pollInterval = requirePositive(pollInterval, "pollInterval");
         this.maxWait = requirePositive(maxWait, "maxWait");
-        if (maxModelBytes <= 0) {
-            throw new IllegalArgumentException("maxModelBytes debe ser positivo: " + maxModelBytes);
+        if (maxModelBytes <= 0 || maxModelBytes > Integer.MAX_VALUE - 8) {
+            throw new IllegalArgumentException("maxModelBytes fuera de rango: " + maxModelBytes);
         }
         this.maxModelBytes = maxModelBytes;
     }
@@ -100,6 +127,7 @@ public final class TripoAdapter implements ModelGeneratorPort {
             Duration connectTimeout,
             Duration readTimeout,
             TripoOptions options,
+            int minBalance,
             Duration pollInterval,
             Duration maxWait,
             long maxModelBytes) {
@@ -123,32 +151,90 @@ public final class TripoAdapter implements ModelGeneratorPort {
                 .build();
         RestClient download =
                 RestClient.builder().requestFactory(requestFactory).build();
-        return new TripoAdapter(api, download, options, pollInterval, maxWait, maxModelBytes);
+        return new TripoAdapter(api, download, options, minBalance, pollInterval, maxWait, maxModelBytes);
     }
 
     @Override
     public GeneratedModel generate(VehicleImage image) {
         Objects.requireNonNull(image, "image");
         long deadline = System.nanoTime() + maxWait.toNanos();
+        AtomicReference<String> createdTask = new AtomicReference<>();
+        Map<String, String> mdc = MDC.getCopyOfContextMap();
+        FutureTask<GeneratedModel> work = new FutureTask<>(() -> {
+            if (mdc != null) {
+                MDC.setContextMap(mdc);
+            }
+            try {
+                return run(image, deadline, createdTask);
+            } finally {
+                MDC.clear();
+            }
+        });
+        Thread.ofVirtual().name("tripo-generation").start(work);
         try {
-            String fileToken = upload(image);
-            String taskId = createTask(fileToken);
-            log.info("Tarea de Tripo creada: {} (modelo {})", taskId, options.model());
-            JsonNode task = awaitTask(taskId, deadline);
-            URI modelUrl = modelUrl(taskId, task);
-            byte[] glb = downloadModel(modelUrl);
+            return work.get(maxWait.toNanos(), TimeUnit.NANOSECONDS);
+        } catch (TimeoutException e) {
+            work.cancel(true);
+            String taskId = createdTask.get();
+            if (taskId != null) {
+                log.warn("Tarea de Tripo {} sin terminar tras {}: puede completarse y cobrarse", taskId, maxWait);
+            }
+            throw new ProviderTimeoutException(
+                    "Tripo no terminó en " + maxWait + (taskId != null ? " (tarea " + taskId + ")" : ""),
+                    null,
+                    taskId != null);
+        } catch (ExecutionException e) {
+            throw unwrap(e.getCause());
+        } catch (InterruptedException e) {
+            work.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new ProviderFailureException("Generación con Tripo interrumpida", e, createdTask.get() != null);
+        }
+    }
+
+    private GeneratedModel run(VehicleImage image, long deadline, AtomicReference<String> createdTask) {
+        String taskId;
+        try {
+            checkBalance();
+            taskId = createTask(upload(image));
+        } catch (ResourceAccessException e) {
+            throw networkError(e);
+        }
+        createdTask.set(taskId);
+        log.info("Tarea de Tripo creada: {} (modelo {})", taskId, options.model());
+        JsonNode task = awaitTask(taskId, deadline);
+        try {
+            byte[] glb = downloadModel(taskId, modelUrl(taskId, task));
+            GeneratedModel model = GeneratedModel.fromGlb(glb);
             log.info(
                     "Tarea de Tripo {} lista: {} bytes, {} créditos",
                     taskId,
                     glb.length,
                     task.path("credits_consumed").asText("?"));
-            return GeneratedModel.fromGlb(glb);
+            return model;
         } catch (ResourceAccessException e) {
-            if (isTimeout(e)) {
-                throw new ProviderTimeoutException("Tiempo agotado con Tripo", e);
-            }
-            throw new ProviderFailureException("No se pudo conectar con Tripo: " + e.getMessage(), e);
+            throw charged(taskId, networkError(e));
+        } catch (DomainException e) {
+            throw charged(taskId, e);
         }
+    }
+
+    /** RN-17: el saldo es el único tope del gasto que sobrevive a un reinicio del servicio. */
+    private void checkBalance() {
+        JsonNode data =
+                api.get().uri(BALANCE_PATH).exchange((request, response) -> data("consultar el saldo", response));
+        JsonNode balance = data.path("balance");
+        if (!balance.isNumber()) {
+            throw new ProviderFailureException("Tripo (consultar el saldo) respondió sin balance");
+        }
+        if (balance.asDouble() < minBalance) {
+            throw new ProviderUnavailableException("Saldo de Tripo insuficiente: " + balance.asText()
+                    + " créditos disponibles; cada modelo usa " + minBalance + " (RN-17)");
+        }
+        log.info(
+                "Saldo de Tripo: {} créditos ({} congelados)",
+                balance.asText(),
+                data.path("frozen").asText("?"));
     }
 
     private String upload(VehicleImage image) {
@@ -198,11 +284,37 @@ public final class TripoAdapter implements ModelGeneratorPort {
         return requireText(data, "task_id", "crear la tarea");
     }
 
+    /**
+     * Consulta la tarea hasta un estado final. La consulta es un GET idempotente: un fallo de red o un 5xx se reintenta
+     * en la siguiente vuelta, porque abandonar una tarea que Tripo sigue procesando no evita que la cobre. Los estados
+     * finales sin modelo los traduce {@link TripoErrorTranslator#translateTaskStatus}, que sabe cuáles devuelve Tripo.
+     */
     private JsonNode awaitTask(String taskId, long deadline) {
+        int consecutiveFailures = 0;
         while (true) {
-            JsonNode task = api.get()
-                    .uri(TASK_PATH, taskId)
-                    .exchange((request, response) -> data("consultar la tarea", response));
+            JsonNode task = null;
+            DomainException failure = null;
+            try {
+                task = api.get()
+                        .uri(TASK_PATH, taskId)
+                        .exchange((request, response) -> data("consultar la tarea", response));
+            } catch (ResourceAccessException e) {
+                failure = networkError(e);
+            } catch (DomainException e) {
+                failure = e;
+            }
+            if (failure != null) {
+                // Clave inválida o límite de tasa no se arreglan reintentando; red, 5xx y respuestas raras, quizá sí
+                boolean transientFailure =
+                        failure instanceof ProviderFailureException || failure instanceof ProviderTimeoutException;
+                if (!transientFailure || ++consecutiveFailures > MAX_POLL_FAILURES) {
+                    throw charged(taskId, failure);
+                }
+                log.warn("Consulta de la tarea {} de Tripo fallida ({}): se reintenta", taskId, failure.getMessage());
+                waitForNextPoll(taskId, deadline, "sin respuesta", 0);
+                continue;
+            }
+            consecutiveFailures = 0;
             String status = task.path("status").asText("");
             if ("success".equals(status)) {
                 return task;
@@ -210,14 +322,18 @@ public final class TripoAdapter implements ModelGeneratorPort {
             if (!RUNNING.contains(status)) {
                 throw translator.translateTaskStatus(taskId, status.isEmpty() ? "(sin estado)" : status);
             }
-            if (System.nanoTime() + pollInterval.toNanos() > deadline) {
-                log.warn(
-                        "Tarea de Tripo {} sin terminar tras {} ({}, {}%): puede completarse y cobrar créditos",
-                        taskId, maxWait, status, task.path("progress").asInt());
-                throw new ProviderTimeoutException("La tarea " + taskId + " de Tripo no terminó a tiempo", null);
-            }
-            sleep(pollInterval);
+            waitForNextPoll(taskId, deadline, status, task.path("progress").asInt());
         }
+    }
+
+    private void waitForNextPoll(String taskId, long deadline, String status, int progress) {
+        if (System.nanoTime() + pollInterval.toNanos() > deadline) {
+            log.warn(
+                    "Tarea de Tripo {} sin terminar tras {} ({}, {}%): puede completarse y cobrar créditos",
+                    taskId, maxWait, status, progress);
+            throw new ProviderTimeoutException("La tarea " + taskId + " de Tripo no terminó a tiempo", null, true);
+        }
+        sleep(pollInterval);
     }
 
     private URI modelUrl(String taskId, JsonNode task) {
@@ -235,19 +351,61 @@ public final class TripoAdapter implements ModelGeneratorPort {
         return uri;
     }
 
-    private byte[] downloadModel(URI modelUrl) {
-        return download.get().uri(modelUrl).exchange((request, response) -> {
-            if (!response.getStatusCode().is2xxSuccessful()) {
-                throw new ProviderFailureException("La descarga del modelo de Tripo respondió "
-                        + response.getStatusCode().value());
+    /** Reintenta una vez los fallos de red y los 5xx; un 4xx o un GLB demasiado grande no se arreglan reintentando. */
+    private byte[] downloadModel(String taskId, URI modelUrl) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                byte[] glb = download.get().uri(modelUrl).exchange((request, response) -> readModel(response));
+                if (glb != null) {
+                    return glb;
+                }
+                if (attempt >= DOWNLOAD_ATTEMPTS) {
+                    throw new ProviderFailureException("La descarga del modelo de Tripo respondió 5xx");
+                }
+            } catch (ResourceAccessException e) {
+                if (attempt >= DOWNLOAD_ATTEMPTS) {
+                    throw e;
+                }
             }
-            byte[] data = response.getBody().readNBytes((int) Math.min(Integer.MAX_VALUE - 8, maxModelBytes + 1));
-            if (data.length > maxModelBytes) {
-                throw new ProviderFailureException(
-                        "El modelo de Tripo supera el máximo de " + maxModelBytes + " bytes (RF-BE-013)");
+            log.warn("Descarga del modelo de la tarea {} de Tripo fallida (intento {}): se reintenta", taskId, attempt);
+        }
+    }
+
+    /**
+     * Lee el GLB en un solo arreglo del tamaño exacto cuando hay {@code Content-Length} (RNF-BE-003).
+     *
+     * @return {@code null} si la respuesta es un 5xx que vale la pena reintentar
+     */
+    private byte[] readModel(ClientHttpResponse response) throws IOException {
+        if (response.getStatusCode().is5xxServerError()) {
+            return null;
+        }
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            throw new ProviderFailureException("La descarga del modelo de Tripo respondió "
+                    + response.getStatusCode().value());
+        }
+        long length = response.getHeaders().getContentLength();
+        if (length > maxModelBytes) {
+            throw tooLarge();
+        }
+        InputStream body = response.getBody();
+        if (length >= 0) {
+            byte[] data = new byte[(int) length];
+            if (body.readNBytes(data, 0, data.length) < data.length) {
+                throw new ProviderFailureException("La descarga del modelo de Tripo quedó incompleta");
             }
             return data;
-        });
+        }
+        byte[] data = body.readNBytes((int) maxModelBytes + 1);
+        if (data.length > maxModelBytes) {
+            throw tooLarge();
+        }
+        return data;
+    }
+
+    private ProviderFailureException tooLarge() {
+        return new ProviderFailureException(
+                "El modelo de Tripo supera el máximo de " + maxModelBytes + " bytes (RF-BE-013)");
     }
 
     /** Devuelve {@code data} de una respuesta {@code {"code":0,"data":{...}}}; cualquier otra cosa es un error. */
@@ -276,6 +434,34 @@ public final class TripoAdapter implements ModelGeneratorPort {
         } catch (JacksonException e) {
             return null;
         }
+    }
+
+    /** Marca un error ocurrido después de crear la tarea: Tripo puede terminarla y cobrarla aunque aquí se abandone. */
+    private static DomainException charged(String taskId, DomainException e) {
+        if (e.providerMayHaveCharged()) {
+            return e;
+        }
+        String message = e.getMessage() + " (tarea " + taskId + ": Tripo puede cobrarla)";
+        return e instanceof ProviderTimeoutException
+                ? new ProviderTimeoutException(message, e, true)
+                : new ProviderFailureException(message, e, true);
+    }
+
+    private static DomainException networkError(ResourceAccessException e) {
+        if (isTimeout(e)) {
+            return new ProviderTimeoutException("Tiempo agotado con Tripo", e);
+        }
+        return new ProviderFailureException("No se pudo conectar con Tripo: " + e.getMessage(), e);
+    }
+
+    private static RuntimeException unwrap(Throwable cause) {
+        if (cause instanceof RuntimeException runtime) {
+            return runtime;
+        }
+        if (cause instanceof Error error) {
+            throw error;
+        }
+        return new ProviderFailureException("Error inesperado con Tripo", cause);
     }
 
     private static String requireText(JsonNode data, String field, String step) {

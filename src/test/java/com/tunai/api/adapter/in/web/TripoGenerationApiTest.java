@@ -3,6 +3,7 @@ package com.tunai.api.adapter.in.web;
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,9 +31,9 @@ import org.springframework.test.web.servlet.assertj.MvcTestResult;
 @SpringBootTest(
         properties = {
             "tunai.tripo.api-key=tsk_test-e2e",
-            "tunai.tripo.read-timeout=2s",
+            "tunai.tripo.read-timeout=5s",
             "tunai.tripo.poll-interval=20ms",
-            "tunai.tripo.max-wait=1s",
+            "tunai.tripo.max-wait=5s",
             "tunai.quota.initial-credits=15",
             "tunai.quota.per-ip=1000",
             "tunai.quota.global-daily=1000"
@@ -63,6 +64,7 @@ class TripoGenerationApiTest {
     @BeforeEach
     void reset() {
         tripo.resetAll();
+        balanceIs("100.00");
     }
 
     @Test
@@ -110,6 +112,17 @@ class TripoGenerationApiTest {
         assertThat(remaining()).isEqualTo(1);
     }
 
+    /** RN-17: sin saldo en Tripo no se sube la foto ni se crea la tarea. */
+    @Test
+    void aLowProviderBalanceAnswers503AndDoesNotConsumeQuota() {
+        balanceIs("10.00");
+
+        assertError(generate(), 503, "SERVICE_UNAVAILABLE");
+        assertThat(remaining()).isEqualTo(1);
+        tripo.verify(0, postRequestedFor(urlEqualTo(FILES_URL)));
+    }
+
+    /** La tarea pudo terminar y cobrarse: el usuario no pierde créditos (la cuota diaria sí lo cuenta). */
     @Test
     void aTaskThatNeverFinishesAnswers504AndDoesNotConsumeQuota() {
         uploadAndCreateOk();
@@ -121,6 +134,10 @@ class TripoGenerationApiTest {
 
     private static String ok(String data) {
         return "{\"code\":0,\"data\":" + data + "}";
+    }
+
+    private static void balanceIs(String balance) {
+        json("GET", "/v3/account/balance", 200, ok("{\"balance\":" + balance + ",\"frozen\":0}"));
     }
 
     private static void uploadAndCreateOk() {

@@ -51,10 +51,18 @@ final class TripoErrorTranslator {
         };
     }
 
-    /** Estados finales sin modelo (Task Lifecycle): solo {@code banned} es culpa de la foto. */
+    /**
+     * Estados finales sin modelo (Task Lifecycle). Solo {@code banned} es culpa de la foto. En {@code failed} y
+     * {@code cancelled} Tripo devuelve los créditos congelados; en {@code banned} la tarea no llega a generarse.
+     * Cualquier otro ({@code expired} o uno desconocido) se trata como cobrado, para que la cuota diaria lo cuente.
+     */
     DomainException translateTaskStatus(String taskId, String status) {
         String summary = "La tarea " + taskId + " de Tripo terminó en estado " + status;
-        return "banned".equals(status) ? new ProviderRejectedException(summary) : new ProviderFailureException(summary);
+        return switch (status) {
+            case "banned" -> new ProviderRejectedException(summary);
+            case "failed", "cancelled" -> new ProviderFailureException(summary);
+            default -> new ProviderFailureException(summary + " (Tripo puede cobrarla)", null, true);
+        };
     }
 
     /** Solo el formato en segundos; una fecha HTTP o un valor inválido se ignoran. */

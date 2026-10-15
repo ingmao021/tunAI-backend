@@ -29,6 +29,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
@@ -47,6 +48,7 @@ class TripoAdapterTest {
             TripoOptions.TextureQuality.DETAILED,
             TripoOptions.GeometryQuality.STANDARD,
             true);
+    private static final int MIN_BALANCE = 40;
 
     @RegisterExtension
     static WireMockExtension tripo = WireMockExtension.newInstance()
@@ -60,6 +62,7 @@ class TripoAdapterTest {
                 Duration.ofSeconds(2),
                 readTimeout,
                 OPTIONS,
+                MIN_BALANCE,
                 Duration.ofMillis(20),
                 maxWait,
                 maxModelBytes);
@@ -67,6 +70,19 @@ class TripoAdapterTest {
 
     private TripoAdapter adapter() {
         return adapter(Duration.ofSeconds(5), Duration.ofSeconds(5), 1024);
+    }
+
+    @BeforeEach
+    void balanceIsEnough() {
+        balanceIs("100.00");
+    }
+
+    private static void balanceIs(String balance) {
+        json("GET", "/v3/account/balance", 200, ok("{\"balance\":" + balance + ",\"frozen\":0.00}"));
+    }
+
+    private static boolean charged(Throwable e) {
+        return ((DomainException) e).providerMayHaveCharged();
     }
 
     private static byte[] glb(int size) {
@@ -180,7 +196,8 @@ class TripoAdapterTest {
 
         assertThatThrownBy(() -> adapter().generate(JPEG))
                 .isInstanceOf(ProviderRejectedException.class)
-                .hasMessageContaining(TASK);
+                .hasMessageContaining(TASK)
+                .matches(e -> !charged(e));
     }
 
     @Test
@@ -189,7 +206,41 @@ class TripoAdapterTest {
         createOk();
         json("GET", TASK_URL, 200, task("failed", null));
 
+        assertThatThrownBy(() -> adapter().generate(JPEG))
+                .isInstanceOf(ProviderFailureException.class)
+                .matches(e -> !charged(e), "Tripo devuelve los créditos de una tarea fallida");
+    }
+
+    /** {@code expired} llega después de {@code success}: Tripo ya cobró. */
+    @Test
+    void anExpiredTaskMayHaveBeenCharged() {
+        uploadOk();
+        createOk();
+        json("GET", TASK_URL, 200, task("expired", null));
+
+        assertThatThrownBy(() -> adapter().generate(JPEG))
+                .isInstanceOf(ProviderFailureException.class)
+                .matches(TripoAdapterTest::charged);
+    }
+
+    /** RN-17: el saldo es el tope del gasto que sobrevive a los reinicios; sin él no se sube ni se crea nada. */
+    @Test
+    void aBalanceBelowTheCostOfAModelMakesTheServiceUnavailable() {
+        balanceIs("39.99");
+
+        assertThatThrownBy(() -> adapter().generate(JPEG))
+                .isInstanceOf(ProviderUnavailableException.class)
+                .hasMessageContaining("39.99");
+        tripo.verify(0, postRequestedFor(urlEqualTo("/v3/files")));
+        tripo.verify(0, postRequestedFor(urlEqualTo("/v3/generation/image-to-model")));
+    }
+
+    @Test
+    void aBalanceResponseWithoutBalanceIsAProviderFailure() {
+        json("GET", "/v3/account/balance", 200, ok("{}"));
+
         assertThatThrownBy(() -> adapter().generate(JPEG)).isInstanceOf(ProviderFailureException.class);
+        tripo.verify(0, postRequestedFor(urlEqualTo("/v3/files")));
     }
 
     @Test
@@ -244,8 +295,30 @@ class TripoAdapterTest {
         assertThatThrownBy(() -> adapter(Duration.ofSeconds(5), Duration.ofMillis(200), 1024)
                         .generate(JPEG))
                 .isInstanceOf(ProviderTimeoutException.class)
-                .hasMessageContaining(TASK);
+                .hasMessageContaining(TASK)
+                .matches(TripoAdapterTest::charged);
         tripo.verify(1, postRequestedFor(urlEqualTo("/v3/generation/image-to-model")));
+    }
+
+    /**
+     * El plazo cubre todo el flujo, también la descarga: una respuesta lenta no deja al cliente esperando más que el
+     * proxy, aunque el timeout de lectura sea mayor.
+     */
+    @Test
+    void theWholeGenerationHasAHardDeadline() {
+        uploadOk();
+        createOk();
+        taskSucceeds();
+        tripo.stubFor(get(urlEqualTo(MODEL_PATH))
+                .willReturn(aResponse().withStatus(200).withBody(GLB).withFixedDelay(3000)));
+        long start = System.nanoTime();
+
+        assertThatThrownBy(() -> adapter(Duration.ofSeconds(10), Duration.ofMillis(500), 1024)
+                        .generate(JPEG))
+                .isInstanceOf(ProviderTimeoutException.class)
+                .hasMessageContaining(TASK)
+                .matches(TripoAdapterTest::charged);
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(2));
     }
 
     @Test
@@ -258,16 +331,55 @@ class TripoAdapterTest {
 
         assertThatThrownBy(() -> adapter(Duration.ofMillis(300), Duration.ofSeconds(5), 1024)
                         .generate(JPEG))
-                .isInstanceOf(ProviderTimeoutException.class);
+                .isInstanceOf(ProviderTimeoutException.class)
+                .matches(e -> !charged(e), "la tarea no llegó a crearse");
+    }
+
+    /** Abandonar la tarea no evita que Tripo la cobre: un fallo pasajero al consultarla se reintenta. */
+    @Test
+    void aTransientErrorWhilePollingIsRetried() {
+        uploadOk();
+        createOk();
+        tripo.stubFor(get(urlEqualTo(TASK_URL))
+                .inScenario("poll")
+                .whenScenarioStateIs(STARTED)
+                .willReturn(aResponse().withStatus(503).withBody("<html>Service unavailable</html>"))
+                .willSetStateTo("recovered"));
+        tripo.stubFor(get(urlEqualTo(TASK_URL))
+                .inScenario("poll")
+                .whenScenarioStateIs("recovered")
+                .willReturn(aResponse()
+                        .withHeader("Content-Type", "application/json")
+                        .withBody(task("success", "{\"model_url\":\"" + modelUrl() + "\"}"))));
+        modelReturns(GLB);
+
+        assertThat(adapter().generate(JPEG).toByteArray()).isEqualTo(GLB);
+        tripo.verify(2, getRequestedFor(urlEqualTo(TASK_URL)));
     }
 
     @Test
-    void aServerErrorWhilePollingIsAProviderFailure() {
+    void aPersistentServerErrorWhilePollingGivesUpAndMayHaveBeenCharged() {
         uploadOk();
         createOk();
         json("GET", TASK_URL, 500, "{\"code\":5000,\"message\":\"Internal error\"}");
 
-        assertThatThrownBy(() -> adapter().generate(JPEG)).isInstanceOf(ProviderFailureException.class);
+        assertThatThrownBy(() -> adapter().generate(JPEG))
+                .isInstanceOf(ProviderFailureException.class)
+                .matches(TripoAdapterTest::charged);
+        tripo.verify(TripoAdapter.MAX_POLL_FAILURES + 1, getRequestedFor(urlEqualTo(TASK_URL)));
+    }
+
+    /** Clave revocada durante la consulta: reintentar no lo arregla. */
+    @Test
+    void anAuthErrorWhilePollingIsNotRetried() {
+        uploadOk();
+        createOk();
+        json("GET", TASK_URL, 401, "{\"code\":1001,\"message\":\"Invalid key\"}");
+
+        assertThatThrownBy(() -> adapter().generate(JPEG))
+                .isInstanceOf(ProviderFailureException.class)
+                .matches(TripoAdapterTest::charged);
+        tripo.verify(1, getRequestedFor(urlEqualTo(TASK_URL)));
     }
 
     @Test
@@ -278,7 +390,8 @@ class TripoAdapterTest {
 
         assertThatThrownBy(() -> adapter().generate(JPEG))
                 .isInstanceOf(ProviderFailureException.class)
-                .hasMessageContaining("URL de modelo");
+                .hasMessageContaining("URL de modelo")
+                .matches(TripoAdapterTest::charged);
     }
 
     @Test
@@ -290,7 +403,8 @@ class TripoAdapterTest {
 
         assertThatThrownBy(() -> adapter().generate(JPEG))
                 .isInstanceOf(ProviderFailureException.class)
-                .hasMessageContaining("RF-BE-013");
+                .hasMessageContaining("RF-BE-013")
+                .matches(TripoAdapterTest::charged);
     }
 
     @Test
@@ -300,7 +414,9 @@ class TripoAdapterTest {
         taskSucceeds();
         modelReturns(Arrays.copyOf("<html>".getBytes(StandardCharsets.US_ASCII), 64));
 
-        assertThatThrownBy(() -> adapter().generate(JPEG)).isInstanceOf(ProviderFailureException.class);
+        assertThatThrownBy(() -> adapter().generate(JPEG))
+                .isInstanceOf(ProviderFailureException.class)
+                .matches(TripoAdapterTest::charged);
     }
 
     @Test
@@ -312,7 +428,41 @@ class TripoAdapterTest {
 
         assertThatThrownBy(() -> adapter().generate(JPEG))
                 .isInstanceOf(ProviderFailureException.class)
-                .hasMessageContaining("403");
+                .hasMessageContaining("403")
+                .matches(TripoAdapterTest::charged);
+        tripo.verify(1, getRequestedFor(urlEqualTo(MODEL_PATH)));
+    }
+
+    @Test
+    void aServerErrorDownloadingIsRetriedOnce() {
+        uploadOk();
+        createOk();
+        taskSucceeds();
+        tripo.stubFor(get(urlEqualTo(MODEL_PATH))
+                .inScenario("download")
+                .whenScenarioStateIs(STARTED)
+                .willReturn(aResponse().withStatus(502))
+                .willSetStateTo("recovered"));
+        tripo.stubFor(get(urlEqualTo(MODEL_PATH))
+                .inScenario("download")
+                .whenScenarioStateIs("recovered")
+                .willReturn(aResponse().withStatus(200).withBody(GLB)));
+
+        assertThat(adapter().generate(JPEG).toByteArray()).isEqualTo(GLB);
+        tripo.verify(TripoAdapter.DOWNLOAD_ATTEMPTS, getRequestedFor(urlEqualTo(MODEL_PATH)));
+    }
+
+    @Test
+    void aDownloadThatKeepsFailingMayHaveBeenCharged() {
+        uploadOk();
+        createOk();
+        taskSucceeds();
+        tripo.stubFor(get(urlEqualTo(MODEL_PATH)).willReturn(aResponse().withStatus(500)));
+
+        assertThatThrownBy(() -> adapter().generate(JPEG))
+                .isInstanceOf(ProviderFailureException.class)
+                .matches(TripoAdapterTest::charged);
+        tripo.verify(TripoAdapter.DOWNLOAD_ATTEMPTS, getRequestedFor(urlEqualTo(MODEL_PATH)));
     }
 
     @Test
