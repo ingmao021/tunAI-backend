@@ -324,7 +324,7 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RN-13 | Nunca se reintenta automáticamente una llamada al proveedor (cada éxito tiene costo) |
 | RN-14 | **Limitación aceptada:** la cuota vive en memoria; un reinicio o apagado del servicio la reinicia. El tope real de gasto es el **saldo de créditos** (25 gratuitos, sin compras): al agotarse, Stability rechaza la llamada y el backend responde `503 SERVICE_UNAVAILABLE` (A9) |
 | RN-15 | Las pruebas automáticas **no hacen llamadas reales** al proveedor: usan WireMock o un generador simulado. Cada generación real gasta 40 créditos y se planifica (primera prueba, demo) |
-| RN-16 | Solo se envían al proveedor fotos que contengan un **vehículo**. SF3D no lo verifica: modela el objeto principal de cualquier foto y cobra la generación. La verificación la hace el **cliente** con un clasificador de imágenes local antes de enviar (ver `HANDOFF-Frontend-UI.md` §5.3.1). **Limitación aceptada:** el backend no la repite, por la RAM de Render (512 MB) y porque el único cliente es la app oficial; un cliente alterado podría saltarla, y el gasto queda acotado por la cuota (RN-02, RN-10, RN-11) |
+| RN-16 | Solo se envían al proveedor fotos que contengan un **vehículo**. El proveedor no lo verifica: modela el objeto principal de cualquier foto y cobra la generación. La verificación la hace el **cliente** con un clasificador de imágenes local antes de enviar (ver el repositorio del frontend). **Limitación aceptada:** el backend no la repite, por la RAM de Render (512 MB) y porque el único cliente es la app oficial; un cliente alterado podría saltarla, y el gasto queda acotado por la cuota (RN-02, RN-10, RN-11) |
 | RN-17 | **Presupuesto de Tripo (v1.10):** recarga de 1 USD = 100 créditos = 2 generaciones de 40 créditos (primera prueba y demo). La cuota (RF-BE-015) limita el gasto en Render: 2 por IP y 2 global por día |
 
 ---
@@ -542,7 +542,7 @@ curl -X POST https://tunai-api-qd5x.onrender.com/api/v1/generations \
 ```
 
 ### 15.3 Ejemplo de cliente (referencia para el frontend)
-Ver `PRD-TunAI-Frontend.md` §15 y `HANDOFF-Frontend-UI.md`. Cliente: `java.net.http.HttpClient` con timeout total de 120 s, sin reintentos automáticos en `POST`.
+Ver `PRD-TunAI-Frontend.md` §15 (repositorio del frontend). Cliente: `java.net.http.HttpClient` con timeout total de 120 s, sin reintentos automáticos en `POST`.
 
 ### 15.4 Catálogo de errores
 
@@ -564,7 +564,7 @@ Ver `PRD-TunAI-Frontend.md` §15 y `HANDOFF-Frontend-UI.md`. Cliente: `java.net.
 | 405 | `METHOD_NOT_ALLOWED` | Método HTTP no permitido en la ruta (+ header `Allow`) | No |
 | 500 | `INTERNAL_ERROR` | Error inesperado (sin detalles internos) | No |
 
-> El cliente tiene además códigos propios que el backend nunca envía (`NOT_A_VEHICLE`, `CLIENT_TIMEOUT`, etc.); ver `HANDOFF-Frontend-UI.md` §7.
+> El cliente tiene además códigos propios que el backend nunca envía (`NOT_A_VEHICLE`, `CLIENT_TIMEOUT`, etc.); ver el repositorio del frontend.
 
 ### 15.5 Versionado del contrato
 - Ambos repositorios referencian esta sección como contrato oficial.
