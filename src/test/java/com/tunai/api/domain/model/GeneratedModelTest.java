@@ -37,12 +37,11 @@ class GeneratedModelTest {
                 .isInstanceOf(ProviderFailureException.class);
     }
 
+    /** {@code fromGlb} no copia (el GLB puede pesar decenas de MB), pero lo que se expone sí es una copia. */
     @Test
-    void isImmutable() {
-        byte[] source = MINIMAL_GLB.clone();
-        GeneratedModel model = GeneratedModel.fromGlb(source);
+    void theExposedBytesAreACopy() {
+        GeneratedModel model = GeneratedModel.fromGlb(MINIMAL_GLB.clone());
 
-        source[0] = 'X';
         model.toByteArray()[1] = 'X';
 
         assertThat(model.toByteArray()).isEqualTo(MINIMAL_GLB);

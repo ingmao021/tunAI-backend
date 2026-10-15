@@ -20,7 +20,8 @@ public final class GeneratedModel {
     }
 
     /**
-     * Crea el modelo validando la firma GLB (RF-BE-013).
+     * Crea el modelo validando la firma GLB (RF-BE-013). No copia el arreglo: un GLB puede pesar decenas de MB y el
+     * servidor tiene poca memoria (RNF-BE-003), así que el llamador le cede el arreglo y no debe modificarlo después.
      *
      * @throws ProviderFailureException si los bytes no son un GLB (flujo A7: respuesta no-GLB del proveedor)
      */
@@ -29,7 +30,7 @@ public final class GeneratedModel {
         if (!hasGlbMagic(glb)) {
             throw new ProviderFailureException("La respuesta del proveedor no es un GLB");
         }
-        return new GeneratedModel(glb.clone());
+        return new GeneratedModel(glb);
     }
 
     private static boolean hasGlbMagic(byte[] data) {
