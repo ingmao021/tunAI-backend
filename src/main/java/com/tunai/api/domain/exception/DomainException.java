@@ -24,6 +24,15 @@ public abstract class DomainException extends RuntimeException {
         this.retryAfter = retryAfter;
     }
 
+    /**
+     * Si el proveedor pudo haber cobrado la generación aunque el cliente no reciba el modelo, por ejemplo, porque la
+     * tarea ya se creó y se agotó el tiempo esperándola. En ese caso la cuota diaria (IP y global) se descuenta igual,
+     * para que el límite siga protegiendo el saldo del proveedor (§13.5).
+     */
+    public boolean providerMayHaveCharged() {
+        return false;
+    }
+
     /** Tiempo sugerido antes de reintentar, para el header {@code Retry-After} (RF-BE-015). */
     public Optional<Duration> retryAfter() {
         return Optional.ofNullable(retryAfter);

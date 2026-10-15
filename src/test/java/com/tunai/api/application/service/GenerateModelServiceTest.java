@@ -98,11 +98,32 @@ class GenerateModelServiceTest {
         assertThat(events).containsExactly("acquire", "reserve", "generate", "release", "close");
     }
 
+    /** El proveedor ya cobró el modelo aunque se descarte: la cuota diaria lo cuenta, los créditos vuelven. */
     @Test
-    void anOversizedModelIsAProviderFailureAndReleasesTheReservation() {
+    void anOversizedModelKeepsTheDailyUsage() {
         assertThatThrownBy(() -> service(succeeding(), GLB.length - 1).generate(COMMAND))
-                .isInstanceOf(ProviderFailureException.class);
-        assertThat(events).containsExactly("acquire", "reserve", "generate", "release", "close");
+                .isInstanceOf(ProviderFailureException.class)
+                .satisfies(e -> assertThat(((ProviderFailureException) e).providerMayHaveCharged())
+                        .isTrue());
+        assertThat(events).containsExactly("acquire", "reserve", "generate", "releaseKeepingDailyUsage", "close");
+    }
+
+    static Stream<RuntimeException> chargedFailures() {
+        return Stream.of(
+                new ProviderTimeoutException("la tarea siguió corriendo", null, true),
+                new ProviderFailureException("descarga fallida", null, true));
+    }
+
+    @ParameterizedTest
+    @MethodSource("chargedFailures")
+    void aFailureTheProviderMayHaveChargedKeepsTheDailyUsage(RuntimeException failure) {
+        ModelGeneratorPort failing = image -> {
+            events.add("generate");
+            throw failure;
+        };
+
+        assertThatThrownBy(() -> service(failing, 1024).generate(COMMAND)).isSameAs(failure);
+        assertThat(events).containsExactly("acquire", "reserve", "generate", "releaseKeepingDailyUsage", "close");
     }
 
     @Test
@@ -174,6 +195,11 @@ class GenerateModelServiceTest {
         @Override
         public void release(QuotaReservation reservation) {
             events.add("release");
+        }
+
+        @Override
+        public void releaseKeepingDailyUsage(QuotaReservation reservation) {
+            events.add("releaseKeepingDailyUsage");
         }
 
         @Override

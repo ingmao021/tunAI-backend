@@ -26,7 +26,8 @@ import java.util.UUID;
  * <p>Los créditos de cada instalación no se reinician. Los contadores de IP y global sí: al cambiar el día (00:00 en
  * la zona configurada) se descartan, y una reserva del día anterior que se confirme o libere después solo afecta a los
  * créditos de su instalación. Un reinicio del proceso vacía todo (limitación aceptada, RN-14): el cliente recuerda el
- * último saldo y no muestra más créditos de los que ya conocía.
+ * último saldo y no muestra más créditos de los que ya conocía, y el saldo real del proveedor lo verifica el adaptador
+ * antes de cada generación.
  */
 public final class InMemoryQuotaStore implements QuotaStorePort {
 
@@ -104,6 +105,21 @@ public final class InMemoryQuotaStore implements QuotaStorePort {
                 if (reservation.day().equals(currentDay)) {
                     dailyCounter(ipKey(reservation.clientIp())).release();
                     dailyCounter(GLOBAL_KEY).release();
+                }
+            }
+        }
+    }
+
+    @Override
+    public void releaseKeepingDailyUsage(QuotaReservation reservation) {
+        Objects.requireNonNull(reservation, "reservation");
+        synchronized (lock) {
+            rollDayIfNeeded(clock.instant());
+            if (pending.remove(reservation.id()) != null) {
+                installation(reservation.installationId()).release();
+                if (reservation.day().equals(currentDay)) {
+                    dailyCounter(ipKey(reservation.clientIp())).commit();
+                    dailyCounter(GLOBAL_KEY).commit();
                 }
             }
         }

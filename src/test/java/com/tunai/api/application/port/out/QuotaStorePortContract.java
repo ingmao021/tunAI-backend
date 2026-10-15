@@ -170,6 +170,49 @@ public abstract class QuotaStorePortContract {
         assertThat(store.status(installation, ip("7.7.7.7")).credits()).isEqualTo(15);
     }
 
+    /** El proveedor pudo haber cobrado: el usuario recupera sus créditos, pero la IP y el global siguen gastados. */
+    @Test
+    void releasingKeepingDailyUsageGivesTheCreditsBackButSpendsTheDailyLimits() {
+        QuotaStorePort store = store(2, 1, 1);
+        InstallationId installation = newInstallation();
+
+        store.releaseKeepingDailyUsage(store.tryReserve(installation, ip("11.0.0.1")));
+
+        assertThat(store.status(installation, ip("11.0.0.2")).credits()).isEqualTo(30);
+        assertThatThrownBy(() -> store.tryReserve(installation, ip("11.0.0.1")))
+                .isInstanceOf(QuotaExceededException.class);
+        assertThatThrownBy(() -> store.tryReserve(newInstallation(), ip("11.0.0.2")))
+                .isInstanceOf(GlobalLimitReachedException.class);
+    }
+
+    @Test
+    void releasingKeepingDailyUsageIsIdempotent() {
+        QuotaStorePort store = store(2, 2, 2);
+        InstallationId installation = newInstallation();
+        QuotaReservation reservation = store.tryReserve(installation, ip("12.0.0.1"));
+
+        store.releaseKeepingDailyUsage(reservation);
+        store.releaseKeepingDailyUsage(reservation);
+        store.release(reservation);
+
+        QuotaStatus status = store.status(installation, ip("12.0.0.1"));
+        assertThat(status.credits()).isEqualTo(30);
+        assertThat(status.remaining()).isEqualTo(1);
+    }
+
+    @Test
+    void aChargedReservationFromYesterdayDoesNotSpendTodaysLimits() {
+        QuotaStorePort store = store(2, 1, 1);
+        InstallationId installation = newInstallation();
+        QuotaReservation yesterday = store.tryReserve(installation, ip("13.0.0.1"));
+
+        clock.set(NEXT_MIDNIGHT.plusSeconds(10));
+        store.releaseKeepingDailyUsage(yesterday);
+
+        assertThat(store.status(installation, ip("13.0.0.1")).credits()).isEqualTo(30);
+        store.commit(store.tryReserve(installation, ip("13.0.0.1")));
+    }
+
     @Test
     void reservationsInProgressCountAsSpent() {
         QuotaStorePort store = store(2, 4, 4);
