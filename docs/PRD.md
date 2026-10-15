@@ -4,8 +4,8 @@
 |---|---|
 | Producto | TunAI — visualización y personalización virtual de vehículos en 3D |
 | Componente | API intermediaria de generación 3D (repositorio **backend**) |
-| Versión del documento | 1.10 |
-| Fecha | 2026-10-14 (v1.0: 2026-10-03) |
+| Versión del documento | 1.11 |
+| Fecha | 2026-10-15 (v1.0: 2026-10-03) |
 | Autor | Anderson |
 | Estado | Aprobado para MVP (con puntos **PENDIENTE DE DEFINIR / VALIDAR**) |
 | Documento relacionado | `PRD-TunAI-Frontend.md` (aplicación de escritorio JavaFX) |
@@ -32,6 +32,7 @@
 | 1.8 | 2026-10-10 | Ensayo real con SF3D superado (GLB de 877 KB aceptado por el visor), pero con calidad insuficiente para la demo. Nuevo proveedor principal **Tripo API v3** (§2.1.1, RF-BE-024, §13.9) con presupuesto mínimo de pago (RN-17); Stability queda como respaldo. Variables `TRIPO_API_KEY` y `TUNAI_TRIPO_*` (Anexo A), checklist de Tripo (Anexo E), riesgos R-BE-13 y R-BE-14, pregunta P-BE-10 |
 | 1.9 | 2026-10-11 | Créditos por instalación (RN-02): 45 al instalar, 15 por modelo, sin renovación diaria. Sin créditos para otro modelo → `402 INSUFFICIENT_CREDITS` (sin `Retry-After`) y el cliente ofrece los planes. `GET /api/v1/quota` y los headers informan el saldo (`credits`, `creditsPerModel`, `X-Credits-Balance`, `X-Credits-Per-Model`). Los límites diarios por IP y global no cambian. `TUNAI_QUOTA_PER_INSTALLATION` se reemplaza por `TUNAI_CREDITS_INITIAL` y `TUNAI_CREDITS_PER_MODEL` |
 | 1.10 | 2026-10-14 | **Tripo es el único proveedor**: se eliminan los adaptadores `stability` y `fake`, `GenerationOptions` y `tunai.generator.*`; la app no arranca sin `TRIPO_API_KEY` (RNF-BE-015). Parámetros elegidos tras una prueba en Tripo Studio: textura `detailed` (4K) + PBR, geometría `standard`, 200.000 caras = 40 créditos por modelo (§2.1.1, §13.9). Nueva variable `TUNAI_TRIPO_GEOMETRY_QUALITY`; `max-model-bytes` sube a 50 MB. Los tests usan WireMock o un generador simulado (RN-15) |
+| 1.11 | 2026-10-15 | Protección del saldo de Tripo tras la revisión de huecos: consulta del saldo antes de cada generación (RF-BE-020, `TUNAI_TRIPO_MIN_BALANCE`); los fallos posteriores a crear la tarea mantienen el uso diario de IP y global (`releaseKeepingDailyUsage`, §13.5); reintentos de la consulta de la tarea y de la descarga; plazo duro de `max-wait` para toda la generación (§13.9); el GLB ya no se copia en memoria (RNF-BE-003) |
 
 **Convenciones:** igual que el PRD del frontend.
 - Prioridad MoSCoW (Must, Should, Could, Won't).
@@ -278,7 +279,7 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RF-BE-017 | Calcular el reinicio diario de la cuota a las 00:00 de la zona horaria configurada (por defecto `America/Bogota`) | Must |
 | RF-BE-018 | No escribir imágenes ni modelos en disco; procesarlos solo en memoria. Por defecto Tomcat guarda los archivos multipart en disco temporal: se configura `spring.servlet.multipart.file-size-threshold` igual a `max-file-size` para que queden en memoria (cuenta contra RNF-BE-003) | Must |
 | RF-BE-019 | Documentar la API con OpenAPI (springdoc), habilitado solo en el perfil `dev` | Should |
-| RF-BE-020 | Antes de generar, consultar el saldo de créditos de Stability y responder `503` si es insuficiente (endpoint de saldo **PENDIENTE DE VALIDAR**) | Could |
+| RF-BE-020 | Antes de generar, consultar el saldo de Tripo (`GET /v3/account/balance`) y responder `503 SERVICE_UNAVAILABLE` sin subir la foto si es menor que `tunai.tripo.min-balance` (40, lo que cuesta un modelo). Es el tope del gasto que sobrevive a los reinicios del servicio (la cuota vive en memoria, RN-14) | Must |
 | RF-BE-021 | ~~Adaptador `fake` de `ModelGeneratorPort`~~ **Retirado en v1.10**: Tripo es el único proveedor. Las pruebas automáticas usan WireMock (`TripoAdapterTest`, `TripoGenerationApiTest`) o un `ModelGeneratorPort` simulado | — |
 | RF-BE-022 | Obtener la IP real del cliente, en este orden: (1) el header de confianza del proxy de borde (`CF-Connecting-IP`: Render va detrás de Cloudflare, que lo sobrescribe); (2) el valor de `X-Forwarded-For` que agregó el primero de N proxies de confianza contando desde la derecha (N configurable, por defecto 1), **nunca** el primero de la lista, que lo controla el cliente; (3) la IP de la conexión | Must |
 | RF-BE-023 | Generar un `traceId` por petición (filtro web, guardado en el MDC de los logs), devolverlo en el header `X-Trace-Id` y en el campo `traceId` de los errores | Must |
@@ -411,14 +412,20 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
     VehicleImage image = cmd.image();                    // ya validada (objeto de valor)
     try (var permit = concurrency.acquire()) {           // ServiceBusyException si no hay cupo
         QuotaReservation r = quota.tryReserve(cmd.installationId(), cmd.clientIp()); // 429/503
-        boolean committed = false;
+        boolean settled = false;
         try {
-            GeneratedModel model = generator.generate(image, options);
+            GeneratedModel model = generator.generate(image);
             QuotaStatus status = quota.commit(r);
-            committed = true;
+            settled = true;
             return new GeneratedModelResult(model, status);
+        } catch (DomainException e) {
+            if (e.providerMayHaveCharged()) {            // la tarea ya existía: Tripo pudo cobrarla
+                quota.releaseKeepingDailyUsage(r);       // créditos al usuario; IP y global siguen gastados
+                settled = true;
+            }
+            throw e;
         } finally {
-            if (!committed) {
+            if (!settled) {
                 quota.release(r);                        // RN-03: ante CUALQUIER fallo, no solo del proveedor
             }
         }
@@ -447,8 +454,10 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
 
 ### 13.9 Comunicación con Tripo
 - **Clientes:** `RestClient` sobre HTTP/1.1 con la URL base de la v3 y la clave en `Authorization`. La descarga del GLB usa otro `RestClient` **sin** la clave, porque `model_url` apunta a otro host (CDN).
-- **Asíncrono a síncrono:** el endpoint `POST /api/v1/generations` sigue siendo síncrono. El adaptador consulta la tarea cada `poll-interval` (2 s) hasta `max-wait` (85 s). Con la subida y la descarga debe quedar por debajo de los ~100 s del proxy de Render (Cloudflare) y de los 120 s del cliente. Si Tripo tarda más, las opciones son un modelo más rápido (`TUNAI_TRIPO_MODEL`) o un contrato asíncrono con el cliente (P-BE-10).
-- **Sin reintentos (RN-13):** la tarea se crea una sola vez. Si se agota `max-wait`, se responde `504 PROVIDER_TIMEOUT` y se libera la cuota, pero la tarea puede terminar en Tripo y cobrar sus créditos: su `task_id` queda en el log (WARN).
+- **Saldo primero (RF-BE-020):** antes de subir la foto se consulta `GET /v3/account/balance`; con menos de `min-balance` (40) se responde 503 sin crear nada.
+- **Asíncrono a síncrono:** el endpoint `POST /api/v1/generations` sigue siendo síncrono. El adaptador consulta la tarea cada `poll-interval` (2 s). `max-wait` (85 s) es un **plazo duro de toda la generación**, del saldo a la descarga: corre en un hilo virtual que se cancela al vencer, así ninguna llamada lenta (con `read-timeout` de 30 s) alarga la espera más allá de los ~100 s del proxy de Render (Cloudflare) ni de los 120 s del cliente. Si Tripo tarda más, las opciones son un modelo más rápido (`TUNAI_TRIPO_MODEL`) o un contrato asíncrono con el cliente (P-BE-10).
+- **Sin reintentos de la creación (RN-13):** la tarea se crea una sola vez. Sí se reintentan los GET idempotentes: la consulta de la tarea ante fallos de red, 5xx o respuestas no-JSON (hasta 5 seguidos) y la descarga del GLB (1 reintento), porque abandonar una tarea no evita que Tripo la cobre.
+- **Fallos después de crear la tarea:** Tripo solo cobra las tareas que terminan en `success`; devuelve los créditos de `failed` y `cancelled`, y `banned` no se genera. Cualquier otro fallo posterior a la creación (tiempo agotado, consulta o descarga fallida, URL ausente, GLB inválido o demasiado grande, estado `expired`) puede haberse cobrado: la excepción lo marca (`providerMayHaveCharged`) y la cuota lo cuenta en los límites diarios de IP y global, aunque al usuario se le devuelven sus créditos. El `task_id` queda en el log (WARN).
 - **Parámetros fijos** (`TripoOptions`): `model` (`v3.1-20260211`), `face_limit` (200.000, para acotar el GLB y lo que dibuja el visor), `texture_quality` (`detailed`, 4K, +10 créditos), `geometry_quality` (`standard`; `detailed` = malla ultra, +20) y `pbr` (`true`). Total: 40 créditos por modelo, que el log confirma con `credits_consumed`. No se envían `quad` (fuerza FBX) ni `compress` (meshopt, que el visor no soporta).
 - **Respuesta:** se exige `code == 0` y `data`; el GLB se lee como máximo `max-model-bytes + 1` y se valida su magic (RF-BE-013).
 - **Mapeo de errores** (`TripoErrorTranslator`), primero por `code` y después por estado HTTP:
@@ -604,7 +613,7 @@ No aplica al backend: pintura, rines, comparación y exportación ocurren en el 
 Generación (proxy SF3D) · cuota 2/día por instalación · límites por IP y global · concurrencia · errores RFC 9457 · health · despliegue Render con Docker · CI con tests y ArchUnit.
 
 ### Versión posterior
-Almacén de cuota persistente (`QuotaStorePort`) · consulta del saldo del proveedor (RF-BE-020) · soporte multivista (otro adaptador de `ModelGeneratorPort`).
+Almacén de cuota persistente (`QuotaStorePort`) · soporte multivista (otro adaptador de `ModelGeneratorPort`).
 
 ### Futuras posibilidades
 Proveedores alternativos (Meshy, Hunyuan3D por API) seleccionables por configuración · autenticación si se crean cuentas.
@@ -683,7 +692,7 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 | P-BE-02 | Nombre definitivo del servicio en Render (base URL) | Resuelta: `https://tunai-api-qd5x.onrender.com` (servicio `tunai-api`, región Ohio, rama `main`) |
 | P-BE-03 | Paquete raíz Java | Resuelta: `com.tunai.api` (backend) y `com.tunai.desktop` (frontend) |
 | P-BE-04 | Códigos de error exactos de Stability, si cobra los fallos y si el endpoint `v2beta` sigue vigente | Parcial: endpoint y campos verificados (2026-10-09); catálogo de errores y cobro de fallos no publicados, se cubren con traducción defensiva (§13.7) y se observan en el ensayo |
-| P-BE-05 | Endpoint de saldo de créditos de Stability (RF-BE-020) | PENDIENTE DE VALIDAR |
+| P-BE-05 | Endpoint de saldo del proveedor (RF-BE-020) | Resuelta (v1.11): `GET /v3/account/balance` de Tripo devuelve `balance` y `frozen` |
 | P-BE-06 | Retención de imágenes por Stability y base legal (Ley 1581) | PENDIENTE DE VALIDAR |
 | P-BE-07 | Cobertura mínima de pruebas | Resuelta: 70 % en dominio y aplicación |
 | P-BE-08 | ¿Proveedor gratuito alternativo (Google, Hugging Face, ejecución local)? | Resuelta: no. Google no ofrece una API de imagen a 3D; se usan los créditos gratuitos de Stability (2 generaciones) |
@@ -735,10 +744,11 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 | `TUNAI_TRIPO_TEXTURE_QUALITY` | `tunai.tripo.texture-quality` | `detailed` | No (`standard` ahorra 10 créditos) |
 | `TUNAI_TRIPO_GEOMETRY_QUALITY` | `tunai.tripo.geometry-quality` | `standard` | No (`detailed` cuesta +20 créditos) |
 | `TUNAI_TRIPO_PBR` | `tunai.tripo.pbr` | `true` | No |
+| `TUNAI_TRIPO_MIN_BALANCE` | `tunai.tripo.min-balance` | `40` | No (debe ser al menos lo que cuesta un modelo) |
 | `TUNAI_TRIPO_CONNECT_TIMEOUT` | `tunai.tripo.connect-timeout` | `10s` | No |
 | `TUNAI_TRIPO_READ_TIMEOUT` | `tunai.tripo.read-timeout` | `30s` | No (por petición) |
 | `TUNAI_TRIPO_POLL_INTERVAL` | `tunai.tripo.poll-interval` | `2s` | No |
-| `TUNAI_TRIPO_MAX_WAIT` | `tunai.tripo.max-wait` | `85s` | No (debe caber en los ~100 s del proxy) |
+| `TUNAI_TRIPO_MAX_WAIT` | `tunai.tripo.max-wait` | `85s` | No (plazo de toda la generación; debe caber en los ~100 s del proxy) |
 | `TUNAI_CREDITS_INITIAL` | `tunai.quota.initial-credits` | `45` | No |
 | `TUNAI_CREDITS_PER_MODEL` | `tunai.quota.credits-per-model` | `15` | No |
 | `TUNAI_QUOTA_PER_IP` | `tunai.quota.per-ip` | `2` | No |
