@@ -61,10 +61,10 @@ public class ApiExceptionHandler {
     /** Mensajes fijos para errores cuyo detalle interno no debe llegar al cliente. */
     private static final Map<Class<? extends DomainException>, String> PUBLIC_DETAILS = Map.of(
             ProviderRejectedException.class, "El servicio de IA no pudo procesar esta imagen.",
-            ProviderFailureException.class, "El servicio de IA falló. No se descontó la cuota.",
+            ProviderFailureException.class, "El servicio de IA falló. No se descontaron tus créditos.",
             GlobalLimitReachedException.class, "El servicio no está disponible en este momento.",
             ProviderUnavailableException.class, "El servicio no está disponible en este momento.",
-            ProviderTimeoutException.class, "El servicio de IA tardó demasiado. No se descontó la cuota.");
+            ProviderTimeoutException.class, "El servicio de IA tardó demasiado. No se descontaron tus créditos.");
 
     @ExceptionHandler(DomainException.class)
     ResponseEntity<ProblemDetail> handleDomain(DomainException e) {
