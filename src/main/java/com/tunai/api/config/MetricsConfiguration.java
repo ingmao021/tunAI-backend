@@ -46,5 +46,6 @@ public class MetricsConfiguration {
     /** @param logInterval cada cuánto se escriben las métricas en el log ({@code TUNAI_METRICS_LOG_INTERVAL}) */
     @Validated
     @ConfigurationProperties("tunai.metrics")
-    public record MetricsProperties(@NotNull @DefaultValue("5m") Duration logInterval) {}
+    public record MetricsProperties(
+            @NotNull @DefaultValue("5m") Duration logInterval) {}
 }

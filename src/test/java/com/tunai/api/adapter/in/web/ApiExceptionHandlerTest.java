@@ -124,9 +124,12 @@ class ApiExceptionHandlerTest {
                 .bodyJson()
                 .hasPathSatisfying("$.code", v -> assertThat(v).asString().isEqualTo(code))
                 .hasPathSatisfying("$.status", v -> assertThat(v).asNumber().isEqualTo(status))
-                .hasPathSatisfying("$.type", v -> assertThat(v)
-                        .asString()
-                        .isEqualTo("urn:tunai:problem:" + code.toLowerCase().replace('_', '-')))
+                .hasPathSatisfying(
+                        "$.type",
+                        v -> assertThat(v)
+                                .asString()
+                                .isEqualTo("urn:tunai:problem:"
+                                        + code.toLowerCase().replace('_', '-')))
                 .hasPathSatisfying("$.traceId", v -> assertThat(v).asString().matches("[0-9a-f]{16}"));
         if (retryAfter == null) {
             assertThat(result).headers().doesNotContainHeader("Retry-After");
@@ -171,9 +174,10 @@ class ApiExceptionHandlerTest {
     void unexpectedErrorsBecomeInternalErrorWithoutStackTrace() throws Exception {
         MvcTestResult result = call(() -> new IllegalStateException("NullPointer en com.tunai.api.Algo"));
 
-        assertThat(result).hasStatus(500).bodyJson().hasPathSatisfying("$.code", v -> assertThat(v)
-                .asString()
-                .isEqualTo("INTERNAL_ERROR"));
+        assertThat(result)
+                .hasStatus(500)
+                .bodyJson()
+                .hasPathSatisfying("$.code", v -> assertThat(v).asString().isEqualTo("INTERNAL_ERROR"));
         assertThat(result.getResponse().getContentAsString()).doesNotContain("com.tunai", "Exception", "at ");
     }
 

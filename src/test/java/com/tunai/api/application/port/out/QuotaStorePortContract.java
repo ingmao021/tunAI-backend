@@ -150,8 +150,9 @@ public abstract class QuotaStorePortContract {
 
         InstallationId installation = newInstallation();
         assertThatThrownBy(() -> store.tryReserve(installation, ip("5.5.5.3")))
-                .isInstanceOfSatisfying(GlobalLimitReachedException.class, e -> assertThat(e.retryAfter())
-                        .contains(Duration.between(MORNING, NEXT_MIDNIGHT)));
+                .isInstanceOfSatisfying(
+                        GlobalLimitReachedException.class,
+                        e -> assertThat(e.retryAfter()).contains(Duration.between(MORNING, NEXT_MIDNIGHT)));
         assertThat(store.status(installation, ip("5.5.5.3"))).isEqualTo(status(5, 5, 75));
     }
 

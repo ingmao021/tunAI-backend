@@ -31,11 +31,10 @@ public final class ImageIoDimensionsReader implements ImageDimensionsReader {
     }
 
     private static ImageReader readerFor(ImageFormat format) {
-        String formatName =
-                switch (format) {
-                    case JPEG -> "jpeg";
-                    case PNG -> "png";
-                };
+        String formatName = switch (format) {
+            case JPEG -> "jpeg";
+            case PNG -> "png";
+        };
         Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName(formatName);
         if (!readers.hasNext()) {
             throw new IllegalStateException("La JVM no tiene lector ImageIO para " + formatName);

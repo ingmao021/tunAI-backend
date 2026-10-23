@@ -14,4 +14,5 @@ import org.springframework.validation.annotation.Validated;
 @Validated
 @ConfigurationProperties("tunai.client-ip")
 public record ClientIpProperties(
-        @DefaultValue("CF-Connecting-IP") String trustedHeader, @Min(1) @DefaultValue("1") int trustedProxies) {}
+        @DefaultValue("CF-Connecting-IP") String trustedHeader,
+        @Min(1) @DefaultValue("1") int trustedProxies) {}

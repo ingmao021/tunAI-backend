@@ -251,11 +251,10 @@ public final class TripoAdapter implements ModelGeneratorPort {
     }
 
     private String upload(VehicleImage image) {
-        String filename =
-                switch (image.format()) {
-                    case JPEG -> "image.jpg";
-                    case PNG -> "image.png";
-                };
+        String filename = switch (image.format()) {
+            case JPEG -> "image.jpg";
+            case PNG -> "image.png";
+        };
         HttpHeaders fileHeaders = new HttpHeaders();
         fileHeaders.setContentType(
                 switch (image.format()) {

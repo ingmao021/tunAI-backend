@@ -16,4 +16,5 @@ import org.springframework.validation.annotation.Validated;
 @Validated
 @ConfigurationProperties("tunai.generation")
 public record GenerationProperties(
-        @NotNull @DefaultValue("50MB") DataSize maxModelBytes, @Min(1) @DefaultValue("2") int maxConcurrent) {}
+        @NotNull @DefaultValue("50MB") DataSize maxModelBytes,
+        @Min(1) @DefaultValue("2") int maxConcurrent) {}

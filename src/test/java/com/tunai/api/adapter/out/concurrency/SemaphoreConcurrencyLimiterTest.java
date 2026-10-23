@@ -17,8 +17,9 @@ class SemaphoreConcurrencyLimiterTest {
         limiter.acquire();
 
         assertThatThrownBy(limiter::acquire)
-                .isInstanceOfSatisfying(ServiceBusyException.class, e -> assertThat(e.retryAfter())
-                        .contains(Duration.ofSeconds(5)));
+                .isInstanceOfSatisfying(
+                        ServiceBusyException.class,
+                        e -> assertThat(e.retryAfter()).contains(Duration.ofSeconds(5)));
     }
 
     @Test

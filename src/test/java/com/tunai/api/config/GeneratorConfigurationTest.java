@@ -39,14 +39,15 @@ class GeneratorConfigurationTest {
     /** Los valores por defecto fijan el costo por modelo en 40 créditos (§13.9). */
     @Test
     void defaultsAreDetailedTextureStandardGeometryAndPbr() {
-        runner.withPropertyValues("tunai.tripo.api-key=" + KEY).run(context -> assertThat(
-                        context.getBean(TripoProperties.class).options())
-                .isEqualTo(new TripoOptions(
-                        "v3.1-20260211",
-                        200_000,
-                        TripoOptions.TextureQuality.DETAILED,
-                        TripoOptions.GeometryQuality.STANDARD,
-                        true)));
+        runner.withPropertyValues("tunai.tripo.api-key=" + KEY)
+                .run(context -> assertThat(
+                                context.getBean(TripoProperties.class).options())
+                        .isEqualTo(new TripoOptions(
+                                "v3.1-20260211",
+                                200_000,
+                                TripoOptions.TextureQuality.DETAILED,
+                                TripoOptions.GeometryQuality.STANDARD,
+                                true)));
     }
 
     @Test

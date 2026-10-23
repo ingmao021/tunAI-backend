@@ -16,4 +16,5 @@ import org.springframework.validation.annotation.Validated;
 @Validated
 @ConfigurationProperties("tunai.image")
 public record ImageProperties(
-        @NotNull @DefaultValue("10MB") DataSize maxBytes, @Min(1) @DefaultValue("512") int minSide) {}
+        @NotNull @DefaultValue("10MB") DataSize maxBytes,
+        @Min(1) @DefaultValue("512") int minSide) {}

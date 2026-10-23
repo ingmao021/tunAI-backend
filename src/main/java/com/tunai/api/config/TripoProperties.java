@@ -28,9 +28,15 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties("tunai.tripo")
 public record TripoProperties(
         String apiKey,
-        @NotNull @DefaultValue("https://openapi.tripo3d.ai/v3") URI baseUrl,
+
+        @NotNull @DefaultValue("https://openapi.tripo3d.ai/v3")
+        URI baseUrl,
+
         @NotBlank @DefaultValue("v3.1-20260211") String model,
-        @Min(TripoOptions.MIN_FACES) @Max(TripoOptions.MAX_FACES) @DefaultValue("200000") int faceLimit,
+
+        @Min(TripoOptions.MIN_FACES) @Max(TripoOptions.MAX_FACES) @DefaultValue("200000")
+        int faceLimit,
+
         @NotNull @DefaultValue("detailed") TripoOptions.TextureQuality textureQuality,
         @NotNull @DefaultValue("standard") TripoOptions.GeometryQuality geometryQuality,
         @DefaultValue("true") boolean pbr,

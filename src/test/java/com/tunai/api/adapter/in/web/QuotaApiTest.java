@@ -82,9 +82,10 @@ class QuotaApiTest {
     void quotaEndpointRequiresTheInstallationId() {
         MvcTestResult result = mvc.get().uri("/api/v1/quota").exchange();
 
-        assertThat(result).hasStatus(400).bodyJson().hasPathSatisfying("$.code", v -> assertThat(v)
-                .asString()
-                .isEqualTo("INVALID_INSTALLATION_ID"));
+        assertThat(result)
+                .hasStatus(400)
+                .bodyJson()
+                .hasPathSatisfying("$.code", v -> assertThat(v).asString().isEqualTo("INVALID_INSTALLATION_ID"));
     }
 
     @Test
