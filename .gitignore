@@ -46,3 +46,7 @@ application-local.properties
 ### Windows ###
 desktop.ini
 Thumbs.db
+
+### Configuración local de Claude Code y del IDE ###
+.claude/settings.local.json
+.mcp.json

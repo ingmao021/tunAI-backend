@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "java \"$CLAUDE_PROJECT_DIR/.claude/hooks/ProtectFiles.java\"", "timeout": 60 }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "java \"$CLAUDE_PROJECT_DIR/.claude/hooks/GuardBash.java\"", "timeout": 60 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "java \"$CLAUDE_PROJECT_DIR/.claude/hooks/QualityGate.java\"", "timeout": 600 }
+        ]
+      }
+    ]
+  }
+}
