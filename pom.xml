@@ -32,6 +32,8 @@
         <wiremock.version>3.13.1</wiremock.version>
         <jacoco.version>0.8.13</jacoco.version>
         <spotless.version>2.44.4</spotless.version>
+        <!-- 2.57 (la de Spotless 2.44) no corre en JDK 25: usa APIs internas de javac que cambiaron -->
+        <palantir-java-format.version>2.102.0</palantir-java-format.version>
         <checkstyle-plugin.version>3.6.0</checkstyle-plugin.version>
         <checkstyle.version>10.21.4</checkstyle.version>
         <!-- RNF-BE-014: cobertura mínima de líneas en domain y application -->
@@ -84,7 +86,9 @@
                 <version>${spotless.version}</version>
                 <configuration>
                     <java>
-                        <palantirJavaFormat/>
+                        <palantirJavaFormat>
+                            <version>${palantir-java-format.version}</version>
+                        </palantirJavaFormat>
                         <removeUnusedImports/>
                         <importOrder/>
                     </java>
