@@ -335,6 +335,61 @@ class TripoAdapterTest {
                 .matches(e -> !charged(e), "la tarea no llegó a crearse");
     }
 
+    /** Un 5xx al crear no dice si la tarea existe: no se reintenta (RN-13), pero la cuota diaria la cuenta. */
+    @Test
+    void aServerErrorCreatingTheTaskMayHaveBeenCharged() {
+        uploadOk();
+        json("POST", "/v3/generation/image-to-model", 500, "{\"code\":500,\"message\":\"Internal error\"}");
+
+        assertThatThrownBy(() -> adapter().generate(JPEG))
+                .isInstanceOf(ProviderFailureException.class)
+                .matches(TripoAdapterTest::charged);
+        tripo.verify(1, postRequestedFor(urlEqualTo("/v3/generation/image-to-model")));
+    }
+
+    @Test
+    void aTimeoutCreatingTheTaskMayHaveBeenCharged() {
+        uploadOk();
+        tripo.stubFor(post(urlEqualTo("/v3/generation/image-to-model"))
+                .willReturn(aResponse()
+                        .withFixedDelay(1500)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody(ok("{\"task_id\":\"" + TASK + "\"}"))));
+
+        assertThatThrownBy(() -> adapter(Duration.ofMillis(300), Duration.ofSeconds(5), 1024)
+                        .generate(JPEG))
+                .isInstanceOf(ProviderTimeoutException.class)
+                .matches(TripoAdapterTest::charged);
+        tripo.verify(1, postRequestedFor(urlEqualTo("/v3/generation/image-to-model")));
+    }
+
+    /** El plazo duro puede vencer con la creación en vuelo: tampoco se sabe si la tarea existe. */
+    @Test
+    void theDeadlineDuringCreationMayHaveBeenCharged() {
+        uploadOk();
+        tripo.stubFor(post(urlEqualTo("/v3/generation/image-to-model"))
+                .willReturn(aResponse()
+                        .withFixedDelay(3000)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody(ok("{\"task_id\":\"" + TASK + "\"}"))));
+
+        assertThatThrownBy(() -> adapter(Duration.ofSeconds(10), Duration.ofMillis(500), 1024)
+                        .generate(JPEG))
+                .isInstanceOf(ProviderTimeoutException.class)
+                .matches(TripoAdapterTest::charged);
+    }
+
+    /** Un 4xx con código de Tripo es un rechazo definitivo: la tarea no se creó. */
+    @Test
+    void anUnsupportedParameterIsAFailureThatWasNotCharged() {
+        uploadOk();
+        json("POST", "/v3/generation/image-to-model", 400, "{\"code\":2002,\"message\":\"Unsupported parameter\"}");
+
+        assertThatThrownBy(() -> adapter().generate(JPEG))
+                .isInstanceOf(ProviderFailureException.class)
+                .matches(e -> !charged(e), "Tripo rechazó la creación");
+    }
+
     /** Abandonar la tarea no evita que Tripo la cobre: un fallo pasajero al consultarla se reintenta. */
     @Test
     void aTransientErrorWhilePollingIsRetried() {

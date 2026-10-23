@@ -22,6 +22,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,9 +57,9 @@ import tools.jackson.databind.node.ObjectNode;
  *
  * <p>Todo el flujo tiene un plazo duro de {@code maxWait}: corre en un hilo virtual que se cancela al vencer, así una
  * llamada lenta no deja al cliente esperando más que el proxy de Render. Nunca se reintenta la creación de la tarea
- * (RN-13). Si algo falla después de crearla (tiempo agotado, consulta o descarga fallida, GLB inválido), Tripo puede
- * cobrarla igual: la excepción lo indica con {@link DomainException#providerMayHaveCharged()} y su {@code task_id}
- * queda en el log.
+ * (RN-13). Si algo falla después de enviar la creación (creación sin respuesta clara, tiempo agotado, consulta o
+ * descarga fallida, GLB inválido), Tripo puede cobrarla igual: la excepción lo indica con
+ * {@link DomainException#providerMayHaveCharged()} y el {@code task_id}, si se conoce, queda en el log.
  */
 public final class TripoAdapter implements ModelGeneratorPort {
 
@@ -158,6 +159,7 @@ public final class TripoAdapter implements ModelGeneratorPort {
     public GeneratedModel generate(VehicleImage image) {
         Objects.requireNonNull(image, "image");
         long deadline = System.nanoTime() + maxWait.toNanos();
+        AtomicBoolean creationSent = new AtomicBoolean();
         AtomicReference<String> createdTask = new AtomicReference<>();
         Map<String, String> mdc = MDC.getCopyOfContextMap();
         FutureTask<GeneratedModel> work = new FutureTask<>(() -> {
@@ -165,7 +167,7 @@ public final class TripoAdapter implements ModelGeneratorPort {
                 MDC.setContextMap(mdc);
             }
             try {
-                return run(image, deadline, createdTask);
+                return run(image, deadline, creationSent, createdTask);
             } finally {
                 MDC.clear();
             }
@@ -178,27 +180,38 @@ public final class TripoAdapter implements ModelGeneratorPort {
             String taskId = createdTask.get();
             if (taskId != null) {
                 log.warn("Tarea de Tripo {} sin terminar tras {}: puede completarse y cobrarse", taskId, maxWait);
+            } else if (creationSent.get()) {
+                log.warn("Plazo de {} vencido mientras se creaba la tarea de Tripo: puede existir y cobrarse", maxWait);
             }
             throw new ProviderTimeoutException(
                     "Tripo no terminó en " + maxWait + (taskId != null ? " (tarea " + taskId + ")" : ""),
                     null,
-                    taskId != null);
+                    creationSent.get());
         } catch (ExecutionException e) {
             throw unwrap(e.getCause());
         } catch (InterruptedException e) {
             work.cancel(true);
             Thread.currentThread().interrupt();
-            throw new ProviderFailureException("Generación con Tripo interrumpida", e, createdTask.get() != null);
+            throw new ProviderFailureException("Generación con Tripo interrumpida", e, creationSent.get());
         }
     }
 
-    private GeneratedModel run(VehicleImage image, long deadline, AtomicReference<String> createdTask) {
-        String taskId;
+    private GeneratedModel run(
+            VehicleImage image, long deadline, AtomicBoolean creationSent, AtomicReference<String> createdTask) {
+        String fileToken;
         try {
             checkBalance();
-            taskId = createTask(upload(image));
+            fileToken = upload(image);
         } catch (ResourceAccessException e) {
             throw networkError(e);
+        }
+        // Desde aquí Tripo puede crear la tarea aunque la respuesta no llegue: un fallo ya no libera la cuota diaria
+        creationSent.set(true);
+        String taskId;
+        try {
+            taskId = createTask(fileToken);
+        } catch (ResourceAccessException e) {
+            throw mayHaveBeenCreated(networkError(e));
         }
         createdTask.set(taskId);
         log.info("Tarea de Tripo creada: {} (modelo {})", taskId, options.model());
@@ -280,8 +293,26 @@ public final class TripoAdapter implements ModelGeneratorPort {
                 .uri(IMAGE_TO_MODEL_PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body.toString())
-                .exchange((request, response) -> data("crear la tarea", response));
+                .exchange((request, response) -> {
+                    try {
+                        return data("crear la tarea", response);
+                    } catch (ProviderFailureException e) {
+                        // Un 4xx con código de Tripo es un rechazo definitivo; un 5xx o un cuerpo ilegible, no
+                        throw response.getStatusCode().is4xxClientError() ? e : mayHaveBeenCreated(e);
+                    }
+                });
         return requireText(data, "task_id", "crear la tarea");
+    }
+
+    /**
+     * La petición de creación salió pero no hubo una respuesta clara (red, tiempo agotado, 5xx): Tripo puede haber
+     * creado la tarea y cobrarla. No se reintenta (RN-13), pero la cuota diaria la cuenta (§13.9).
+     */
+    private static DomainException mayHaveBeenCreated(DomainException e) {
+        String message = e.getMessage() + " (la tarea pudo crearse: Tripo puede cobrarla)";
+        return e instanceof ProviderTimeoutException
+                ? new ProviderTimeoutException(message, e, true)
+                : new ProviderFailureException(message, e, true);
     }
 
     /**
