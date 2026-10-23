@@ -12,7 +12,7 @@
     <artifactId>tunai-api</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>tunai-api</name>
-    <description>TunAI API: intermediario de generación 3D (Stable Fast 3D)</description>
+    <description>TunAI API: intermediario de generación 3D (Tripo API v3)</description>
     <url/>
     <licenses>
         <license/>
