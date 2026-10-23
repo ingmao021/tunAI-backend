@@ -14,9 +14,12 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 
 /**
  * El límite de multipart lo aplica Tomcat antes del controlador; MockMvc no lo reproduce, por eso esta prueba usa un
- * servidor real (RNF-BE-007, catálogo 413).
+ * servidor real (RNF-BE-007, catálogo 413). La clave es de prueba y la URL de Tripo no existe: la petición nunca llega
+ * al proveedor (RN-15) y la prueba no depende de que {@code TRIPO_API_KEY} esté en el entorno.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = {"tunai.tripo.api-key=tsk_test-upload-limit", "tunai.tripo.base-url=http://127.0.0.1:9/v3"})
 class UploadLimitTest {
 
     private static final String BOUNDARY = "tunai-test-boundary";
