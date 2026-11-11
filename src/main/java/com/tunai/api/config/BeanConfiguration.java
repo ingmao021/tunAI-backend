@@ -1,22 +1,33 @@
 package com.tunai.api.config;
 
 import com.tunai.api.adapter.in.web.ImageRequestMapper;
+import com.tunai.api.adapter.out.auth.ConfiguredCredentialVerifier;
+import com.tunai.api.adapter.out.auth.HmacSessionIssuer;
 import com.tunai.api.adapter.out.concurrency.SemaphoreConcurrencyLimiter;
 import com.tunai.api.adapter.out.imageio.ImageIoDimensionsReader;
 import com.tunai.api.adapter.out.metrics.MeteredModelGenerator;
 import com.tunai.api.adapter.out.quota.InMemoryQuotaStore;
+import com.tunai.api.application.port.in.AuthenticateUseCase;
 import com.tunai.api.application.port.in.GenerateModelUseCase;
 import com.tunai.api.application.port.in.GetQuotaUseCase;
+import com.tunai.api.application.port.in.LoginUseCase;
 import com.tunai.api.application.port.out.ConcurrencyLimiterPort;
+import com.tunai.api.application.port.out.CredentialVerifierPort;
 import com.tunai.api.application.port.out.ModelGeneratorPort;
 import com.tunai.api.application.port.out.QuotaStorePort;
+import com.tunai.api.application.port.out.SessionIssuerPort;
+import com.tunai.api.application.port.out.SessionVerifierPort;
+import com.tunai.api.application.service.AuthenticationService;
 import com.tunai.api.application.service.GenerateModelService;
 import com.tunai.api.application.service.GetQuotaService;
+import com.tunai.api.application.service.LoginService;
 import com.tunai.api.domain.model.ImageDimensionsReader;
 import com.tunai.api.domain.model.ImagePolicy;
 import com.tunai.api.domain.model.QuotaLimits;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.MultipartConfigElement;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.time.Clock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,7 +39,12 @@ import org.springframework.util.unit.DataSize;
 
 /** Ensambla los casos de uso con sus puertos (§13.4, principio D). */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties({ImageProperties.class, GenerationProperties.class, QuotaProperties.class})
+@EnableConfigurationProperties({
+    ImageProperties.class,
+    GenerationProperties.class,
+    QuotaProperties.class,
+    AuthProperties.class
+})
 public class BeanConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(BeanConfiguration.class);
@@ -41,6 +57,8 @@ public class BeanConfiguration {
 
     /** Etiqueta {@code provider} de las métricas (RNF-BE-012). */
     static final String PROVIDER = "tripo";
+
+    private static final int TOKEN_SECRET_BYTES = 32;
 
     @Bean
     ImagePolicy imagePolicy(ImageProperties properties) {
@@ -87,6 +105,38 @@ public class BeanConfiguration {
         return new GetQuotaService(quota);
     }
 
+    @Bean
+    CredentialVerifierPort credentialVerifier(AuthProperties auth) {
+        ConfiguredCredentialVerifier verifier = new ConfiguredCredentialVerifier(auth.users());
+        if (verifier.userCount() == 0) {
+            log.warn("TUNAI_AUTH_USERS vacío: nadie podrá iniciar sesión (el hash se genera con PasswordHash.hash)");
+        }
+        return verifier;
+    }
+
+    @Bean
+    HmacSessionIssuer sessionIssuer(AuthProperties auth, Clock clock) {
+        byte[] secret;
+        if (auth.tokenSecret().isBlank()) {
+            log.warn("TUNAI_AUTH_TOKEN_SECRET vacío: se usa una clave aleatoria; las sesiones caducan al reiniciar");
+            secret = new byte[TOKEN_SECRET_BYTES];
+            new SecureRandom().nextBytes(secret);
+        } else {
+            secret = auth.tokenSecret().getBytes(StandardCharsets.UTF_8);
+        }
+        return new HmacSessionIssuer(secret, auth.sessionTtl(), clock);
+    }
+
+    @Bean
+    AuthenticateUseCase authenticateUseCase(SessionVerifierPort sessions) {
+        return new AuthenticationService(sessions);
+    }
+
+    @Bean
+    LoginUseCase loginUseCase(CredentialVerifierPort credentials, SessionIssuerPort sessions) {
+        return new LoginService(credentials, sessions);
+    }
+
     /**
      * Límites de multipart derivados de {@code tunai.image.max-bytes}. El umbral igual al tamaño máximo de la petición
      * mantiene el archivo en memoria: Tomcat no escribe temporales en disco (RF-BE-018).
@@ -104,7 +154,7 @@ public class BeanConfiguration {
     /** §13.8: el operador ve al arrancar qué proveedor y qué límites quedaron activos. */
     private static void logEffectiveLimits(QuotaLimits limits) {
         log.info(
-                "Cuota: {} créditos por instalación, {} por modelo; diaria {} por IP, {} global; reinicio a las"
+                "Cuota: {} créditos por cuenta, {} por modelo; diaria {} por IP, {} global; reinicio a las"
                         + " 00:00 {}",
                 limits.initialCredits(),
                 limits.creditsPerModel(),

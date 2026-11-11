@@ -42,7 +42,7 @@ public class GenerateModelService implements GenerateModelUseCase {
     public GenerationResult generate(GenerateCommand command) {
         Objects.requireNonNull(command, "command");
         try (var permit = concurrency.acquire()) {
-            QuotaReservation reservation = quota.tryReserve(command.installationId(), command.clientIp());
+            QuotaReservation reservation = quota.tryReserve(command.accountId(), command.clientIp());
             boolean settled = false;
             try {
                 GeneratedModel model = generator.generate(command.image());

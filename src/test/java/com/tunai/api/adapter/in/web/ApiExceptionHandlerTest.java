@@ -7,7 +7,7 @@ import com.tunai.api.domain.exception.GlobalLimitReachedException;
 import com.tunai.api.domain.exception.ImageTooLargeException;
 import com.tunai.api.domain.exception.InsufficientCreditsException;
 import com.tunai.api.domain.exception.InvalidImageException;
-import com.tunai.api.domain.exception.InvalidInstallationIdException;
+import com.tunai.api.domain.exception.InvalidTokenException;
 import com.tunai.api.domain.exception.ProviderFailureException;
 import com.tunai.api.domain.exception.ProviderRejectedException;
 import com.tunai.api.domain.exception.ProviderTimeoutException;
@@ -53,11 +53,7 @@ class ApiExceptionHandlerTest {
     static Stream<Arguments> catalog() {
         Duration none = null;
         return Stream.of(
-                Arguments.of(
-                        (Supplier<DomainException>) () -> new InvalidInstallationIdException("x"),
-                        400,
-                        "INVALID_INSTALLATION_ID",
-                        none),
+                Arguments.of((Supplier<DomainException>) InvalidTokenException::new, 401, "UNAUTHORIZED", none),
                 Arguments.of(
                         (Supplier<DomainException>) () -> new InvalidImageException("x"), 400, "INVALID_IMAGE", none),
                 Arguments.of(

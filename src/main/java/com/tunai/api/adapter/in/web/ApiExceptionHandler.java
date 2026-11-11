@@ -4,8 +4,9 @@ import com.tunai.api.domain.exception.DomainException;
 import com.tunai.api.domain.exception.GlobalLimitReachedException;
 import com.tunai.api.domain.exception.ImageTooLargeException;
 import com.tunai.api.domain.exception.InsufficientCreditsException;
+import com.tunai.api.domain.exception.InvalidCredentialsException;
 import com.tunai.api.domain.exception.InvalidImageException;
-import com.tunai.api.domain.exception.InvalidInstallationIdException;
+import com.tunai.api.domain.exception.InvalidTokenException;
 import com.tunai.api.domain.exception.ProviderFailureException;
 import com.tunai.api.domain.exception.ProviderRejectedException;
 import com.tunai.api.domain.exception.ProviderTimeoutException;
@@ -25,6 +26,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
@@ -45,8 +47,9 @@ public class ApiExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
     private static final Map<Class<? extends DomainException>, ErrorCode> DOMAIN_CODES = Map.ofEntries(
-            Map.entry(InvalidInstallationIdException.class, ErrorCode.INVALID_INSTALLATION_ID),
+            Map.entry(InvalidTokenException.class, ErrorCode.UNAUTHORIZED),
             Map.entry(InvalidImageException.class, ErrorCode.INVALID_IMAGE),
+            Map.entry(InvalidCredentialsException.class, ErrorCode.INVALID_CREDENTIALS),
             Map.entry(ImageTooLargeException.class, ErrorCode.IMAGE_TOO_LARGE),
             Map.entry(UnsupportedImageFormatException.class, ErrorCode.UNSUPPORTED_MEDIA_TYPE),
             Map.entry(ProviderRejectedException.class, ErrorCode.PROVIDER_REJECTED),
@@ -101,6 +104,12 @@ public class ApiExceptionHandler {
     ResponseEntity<ProblemDetail> handleMediaType(HttpMediaTypeNotSupportedException e) {
         log.info("{}: {}", ErrorCode.UNSUPPORTED_MEDIA_TYPE, e.getMessage());
         return problem(ErrorCode.UNSUPPORTED_MEDIA_TYPE, "La petición debe ser multipart/form-data.", Optional.empty());
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    ResponseEntity<ProblemDetail> handleUnreadableBody(HttpMessageNotReadableException e) {
+        log.info("{}: {}", ErrorCode.BAD_REQUEST, e.getMessage());
+        return problem(ErrorCode.BAD_REQUEST, "El cuerpo de la petición no es un JSON válido.", Optional.empty());
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

@@ -8,7 +8,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.validation.annotation.Validated;
 
 /**
- * Límites de uso (RN-02, RN-10, RN-11, Anexo A). Cada instalación recibe {@code initialCredits} una vez y cada modelo
+ * Límites de uso (RN-02, RN-10, RN-11, Anexo A). Cada cuenta recibe {@code initialCredits} una vez y cada modelo
  * usa {@code creditsPerModel} (45 y 15: tres modelos). Los límites diarios por IP y global (2) son los de la demo; en
  * desarrollo se suben por variables de entorno (§13.8).
  */

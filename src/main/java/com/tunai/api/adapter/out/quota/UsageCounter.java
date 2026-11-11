@@ -1,7 +1,7 @@
 package com.tunai.api.adapter.out.quota;
 
 /**
- * Generaciones confirmadas y reservadas (en curso) de una clave: los modelos de una instalación o los del día de una IP
+ * Generaciones confirmadas y reservadas (en curso) de una clave: los modelos de una cuenta o los del día de una IP
  * o del total. No es thread-safe: lo protege el lock de {@link InMemoryQuotaStore}.
  */
 final class UsageCounter {

@@ -2,8 +2,8 @@ package com.tunai.api.application.service;
 
 import com.tunai.api.application.port.in.GetQuotaUseCase;
 import com.tunai.api.application.port.out.QuotaStorePort;
+import com.tunai.api.domain.model.AccountId;
 import com.tunai.api.domain.model.ClientIp;
-import com.tunai.api.domain.model.InstallationId;
 import com.tunai.api.domain.model.QuotaStatus;
 import java.util.Objects;
 
@@ -16,7 +16,7 @@ public class GetQuotaService implements GetQuotaUseCase {
     }
 
     @Override
-    public QuotaStatus getQuota(InstallationId installationId, ClientIp clientIp) {
-        return quota.status(installationId, clientIp);
+    public QuotaStatus getQuota(AccountId accountId, ClientIp clientIp) {
+        return quota.status(accountId, clientIp);
     }
 }

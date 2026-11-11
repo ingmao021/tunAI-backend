@@ -1,7 +1,7 @@
 package com.tunai.api.application.port.out;
 
+import com.tunai.api.domain.model.AccountId;
 import com.tunai.api.domain.model.ClientIp;
-import com.tunai.api.domain.model.InstallationId;
 import com.tunai.api.domain.model.QuotaReservation;
 import com.tunai.api.domain.model.QuotaStatus;
 
@@ -12,14 +12,14 @@ import com.tunai.api.domain.model.QuotaStatus;
 public interface QuotaStorePort {
 
     /**
-     * Reserva un cupo de forma atómica en los contadores de instalación, IP y global.
+     * Reserva un cupo de forma atómica en los contadores de cuenta, IP y global.
      *
-     * @throws com.tunai.api.domain.exception.InsufficientCreditsException si la instalación no tiene créditos para otro
+     * @throws com.tunai.api.domain.exception.InsufficientCreditsException si la cuenta no tiene créditos para otro
      *     modelo
      * @throws com.tunai.api.domain.exception.QuotaExceededException si se agotó el límite diario de la IP
      * @throws com.tunai.api.domain.exception.GlobalLimitReachedException si se agotó el límite global diario
      */
-    QuotaReservation tryReserve(InstallationId installationId, ClientIp clientIp);
+    QuotaReservation tryReserve(AccountId accountId, ClientIp clientIp);
 
     /** Convierte la reserva en una generación exitosa y devuelve el estado resultante. */
     QuotaStatus commit(QuotaReservation reservation);
@@ -28,12 +28,12 @@ public interface QuotaStorePort {
     void release(QuotaReservation reservation);
 
     /**
-     * La generación falló pero el proveedor pudo haberla cobrado: devuelve los créditos de la instalación (el usuario
+     * La generación falló pero el proveedor pudo haberla cobrado: devuelve los créditos de la cuenta (el usuario
      * no recibió modelo) y mantiene el uso diario de la IP y global, que protege el saldo del proveedor. Es
      * idempotente, como {@link #release}.
      */
     void releaseKeepingDailyUsage(QuotaReservation reservation);
 
     /** Estado actual sin consumir cuota (RF-BE-002). */
-    QuotaStatus status(InstallationId installationId, ClientIp clientIp);
+    QuotaStatus status(AccountId accountId, ClientIp clientIp);
 }

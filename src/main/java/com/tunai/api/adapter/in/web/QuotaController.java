@@ -1,8 +1,8 @@
 package com.tunai.api.adapter.in.web;
 
 import com.tunai.api.application.port.in.GetQuotaUseCase;
+import com.tunai.api.domain.model.AccountId;
 import com.tunai.api.domain.model.ClientIp;
-import com.tunai.api.domain.model.InstallationId;
 import com.tunai.api.domain.model.QuotaStatus;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
@@ -22,8 +22,8 @@ public class QuotaController {
     }
 
     @GetMapping("/quota")
-    public ResponseEntity<QuotaResponse> quota(InstallationId installationId, ClientIp clientIp) {
-        QuotaStatus status = getQuota.getQuota(installationId, clientIp);
+    public ResponseEntity<QuotaResponse> quota(AccountId accountId, ClientIp clientIp) {
+        QuotaStatus status = getQuota.getQuota(accountId, clientIp);
         HttpHeaders headers = new HttpHeaders();
         QuotaHeaders.write(headers, status);
         return ResponseEntity.ok().headers(headers).body(QuotaResponse.of(status));

@@ -3,7 +3,7 @@ package com.tunai.api.domain.exception;
 /**
  * El proveedor de IA falló (5xx, tarea fallida o respuesta no-GLB). Se traduce a {@code 502 PROVIDER_ERROR}. Si
  * {@link #providerMayHaveCharged()} es falso se libera toda la reserva de cuota; si es verdadero, solo los créditos de
- * la instalación.
+ * la cuenta.
  */
 public class ProviderFailureException extends DomainException {
 

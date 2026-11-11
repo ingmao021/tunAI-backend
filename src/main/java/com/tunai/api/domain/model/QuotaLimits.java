@@ -6,7 +6,7 @@ import java.time.ZoneId;
 import java.util.Objects;
 
 /**
- * Límites de uso (RN-02, RN-10, RN-11). Cada instalación recibe {@code initialCredits} una sola vez y cada modelo
+ * Límites de uso (RN-02, RN-10, RN-11). Cada cuenta recibe {@code initialCredits} una sola vez y cada modelo
  * generado con éxito descuenta {@code creditsPerModel}; los créditos no se renuevan. Los límites por IP y global son
  * diarios y se reinician a las 00:00 en {@code zone} (RF-BE-017).
  */
@@ -22,7 +22,7 @@ public record QuotaLimits(int initialCredits, int creditsPerModel, int perIp, in
         }
     }
 
-    /** Modelos que alcanza a generar una instalación nueva. */
+    /** Modelos que alcanza a generar una cuenta nueva. */
     public int modelsPerInstallation() {
         return initialCredits / creditsPerModel;
     }

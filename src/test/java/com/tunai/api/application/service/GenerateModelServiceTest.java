@@ -13,10 +13,10 @@ import com.tunai.api.domain.exception.ProviderRejectedException;
 import com.tunai.api.domain.exception.ProviderTimeoutException;
 import com.tunai.api.domain.exception.QuotaExceededException;
 import com.tunai.api.domain.exception.ServiceBusyException;
+import com.tunai.api.domain.model.AccountId;
 import com.tunai.api.domain.model.ClientIp;
 import com.tunai.api.domain.model.GeneratedModel;
 import com.tunai.api.domain.model.ImageFormat;
-import com.tunai.api.domain.model.InstallationId;
 import com.tunai.api.domain.model.QuotaReservation;
 import com.tunai.api.domain.model.QuotaStatus;
 import com.tunai.api.domain.model.VehicleImage;
@@ -40,7 +40,7 @@ class GenerateModelServiceTest {
     private static final QuotaStatus AFTER_COMMIT =
             new QuotaStatus(3, 2, Instant.parse("2026-10-10T05:00:00Z"), 30, 15);
     private static final GenerateCommand COMMAND = new GenerateCommand(
-            new InstallationId(UUID.randomUUID()),
+            new AccountId(UUID.randomUUID().toString()),
             ClientIp.parse("1.2.3.4").orElseThrow(),
             new VehicleImage(new byte[] {1}, ImageFormat.JPEG, 512, 512));
 
@@ -174,13 +174,13 @@ class GenerateModelServiceTest {
         boolean failOnCommit;
 
         @Override
-        public QuotaReservation tryReserve(InstallationId installationId, ClientIp clientIp) {
+        public QuotaReservation tryReserve(AccountId accountId, ClientIp clientIp) {
             events.add("reserve");
             if (rejectReserve) {
                 throw new QuotaExceededException(
                         "agotada", new QuotaStatus(2, 0, Instant.EPOCH, 45, 15), Duration.ofHours(1));
             }
-            return new QuotaReservation(UUID.randomUUID(), installationId, clientIp, LocalDate.of(2026, 10, 9));
+            return new QuotaReservation(UUID.randomUUID(), accountId, clientIp, LocalDate.of(2026, 10, 9));
         }
 
         @Override
@@ -203,7 +203,7 @@ class GenerateModelServiceTest {
         }
 
         @Override
-        public QuotaStatus status(InstallationId installationId, ClientIp clientIp) {
+        public QuotaStatus status(AccountId accountId, ClientIp clientIp) {
             throw new UnsupportedOperationException();
         }
     }

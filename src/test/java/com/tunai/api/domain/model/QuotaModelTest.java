@@ -50,12 +50,12 @@ class QuotaModelTest {
     }
 
     @Test
-    void installationIdIsHashedForLogs() {
-        InstallationId id = InstallationId.parse("3f1c2a9e-6d0b-4e8a-9f7c-2b5d1e4a6c80");
+    void accountIdIsNormalizedAndHashedForLogs() {
+        AccountId id = new AccountId("  Demo ");
 
-        assertThat(id.hashForLogs()).hasSize(12).matches("[0-9a-f]+").doesNotContain("3f1c2a9e");
-        assertThat(id.hashForLogs())
-                .isEqualTo(InstallationId.parse("3F1C2A9E-6D0B-4E8A-9F7C-2B5D1E4A6C80")
-                        .hashForLogs());
+        assertThat(id.value()).isEqualTo("demo");
+        assertThat(id.hashForLogs()).hasSize(12).matches("[0-9a-f]+").doesNotContain("demo");
+        assertThat(id.hashForLogs()).isEqualTo(new AccountId("DEMO").hashForLogs());
+        assertThatThrownBy(() -> new AccountId("  ")).isInstanceOf(IllegalArgumentException.class);
     }
 }

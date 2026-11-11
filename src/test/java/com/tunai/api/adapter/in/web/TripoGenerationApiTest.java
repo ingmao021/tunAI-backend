@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import com.tunai.api.TestImages;
+import com.tunai.api.adapter.out.auth.HmacSessionIssuer;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -58,6 +59,9 @@ class TripoGenerationApiTest {
 
     @Autowired
     MockMvcTester mvc;
+
+    @Autowired
+    HmacSessionIssuer issuer;
 
     private final String installation = UUID.randomUUID().toString();
 
@@ -160,7 +164,7 @@ class TripoGenerationApiTest {
     private MvcTestResult generate() {
         return mvc.post()
                 .uri("/api/v1/generations")
-                .header("X-Installation-Id", installation)
+                .header("Authorization", "Bearer " + issuer.issue(installation).token())
                 .multipart()
                 .file("image", TestImages.jpeg(640, 512))
                 .exchange();
@@ -169,7 +173,7 @@ class TripoGenerationApiTest {
     private int remaining() {
         MvcTestResult quota = mvc.get()
                 .uri("/api/v1/quota")
-                .header("X-Installation-Id", installation)
+                .header("Authorization", "Bearer " + issuer.issue(installation).token())
                 .exchange();
         return Integer.parseInt(quota.getResponse().getHeader("X-Quota-Remaining"));
     }

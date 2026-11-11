@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import com.tunai.api.TestImages;
+import com.tunai.api.adapter.out.auth.HmacSessionIssuer;
 import com.tunai.api.application.port.out.ModelGeneratorPort;
 import com.tunai.api.domain.model.GeneratedModel;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -31,13 +32,16 @@ import org.springframework.test.web.servlet.assertj.MvcTestResult;
 class GenerationApiTest {
 
     private static final String URI = "/api/v1/generations";
-    private static final String INSTALLATION_ID = "3f1c2a9e-6d0b-4e8a-9f7c-2b5d1e4a6c80";
+    private static final String ACCOUNT = "demo";
 
     @Autowired
     MockMvcTester mvc;
 
     @Autowired
     MeterRegistry meterRegistry;
+
+    @Autowired
+    HmacSessionIssuer issuer;
 
     @MockitoBean
     ModelGeneratorPort generator;
@@ -54,7 +58,7 @@ class GenerationApiTest {
      */
     @Test
     void eachGenerationIsMeasured() {
-        generate(INSTALLATION_ID, TestImages.jpeg(800, 600));
+        generate(ACCOUNT, TestImages.jpeg(800, 600));
 
         assertThat(meterRegistry
                         .find("tunai.generations")
@@ -70,7 +74,7 @@ class GenerationApiTest {
 
     @Test
     void returnsTheGlbForAValidPhoto() {
-        MvcTestResult result = generate(INSTALLATION_ID, TestImages.jpeg(800, 600));
+        MvcTestResult result = generate(ACCOUNT, TestImages.jpeg(800, 600));
 
         assertThat(result).hasStatusOk().hasContentType("model/gltf-binary");
         byte[] body = result.getResponse().getContentAsByteArray();
@@ -83,44 +87,47 @@ class GenerationApiTest {
 
     @Test
     void acceptsPng() {
-        assertThat(generate(INSTALLATION_ID, TestImages.png(512, 512))).hasStatusOk();
+        assertThat(generate(ACCOUNT, TestImages.png(512, 512))).hasStatusOk();
     }
 
     @Test
-    void missingInstallationIdIsRejected() {
-        assertError(generate(null, TestImages.jpeg(800, 600)), 400, "INVALID_INSTALLATION_ID");
+    void missingTokenIsRejected() {
+        assertError(generateWithAuthorization(null, TestImages.jpeg(800, 600)), 401, "UNAUTHORIZED");
     }
 
     @Test
-    void malformedInstallationIdIsRejected() {
-        assertError(generate("1-1-1-1-1", TestImages.jpeg(800, 600)), 400, "INVALID_INSTALLATION_ID");
+    void invalidTokenIsRejected() {
+        assertError(generateWithAuthorization("Bearer basura", TestImages.jpeg(800, 600)), 401, "UNAUTHORIZED");
     }
 
     @Test
-    void theHeaderIsCheckedBeforeTheImage() {
-        assertError(generate("nope", "not an image".getBytes(StandardCharsets.UTF_8)), 400, "INVALID_INSTALLATION_ID");
+    void theTokenIsCheckedBeforeTheImage() {
+        assertError(
+                generateWithAuthorization("Bearer basura", "not an image".getBytes(StandardCharsets.UTF_8)),
+                401,
+                "UNAUTHORIZED");
     }
 
     @Test
     void bytesThatAreNotAnImageAreRejected() {
-        assertError(generate(INSTALLATION_ID, "%PDF-1.7".getBytes(StandardCharsets.US_ASCII)), 400, "INVALID_IMAGE");
+        assertError(generate(ACCOUNT, "%PDF-1.7".getBytes(StandardCharsets.US_ASCII)), 400, "INVALID_IMAGE");
     }
 
     @Test
     void anImageTooSmallIsRejected() {
-        assertError(generate(INSTALLATION_ID, TestImages.png(800, 300)), 400, "INVALID_IMAGE");
+        assertError(generate(ACCOUNT, TestImages.png(800, 300)), 400, "INVALID_IMAGE");
     }
 
     @Test
     void anotherImageFormatIsUnsupported() {
-        assertError(generate(INSTALLATION_ID, TestImages.webpHeader()), 415, "UNSUPPORTED_MEDIA_TYPE");
+        assertError(generate(ACCOUNT, TestImages.webpHeader()), 415, "UNSUPPORTED_MEDIA_TYPE");
     }
 
     @Test
     void theContentTypeOfThePartIsNotTrusted() {
         MvcTestResult result = mvc.post()
                 .uri(URI)
-                .header("X-Installation-Id", INSTALLATION_ID)
+                .header("Authorization", bearer(ACCOUNT))
                 .multipart()
                 .file(new org.springframework.mock.web.MockMultipartFile(
                         "image", "carro.png", "image/png", "%PDF-1.7".getBytes(StandardCharsets.US_ASCII)))
@@ -133,7 +140,7 @@ class GenerationApiTest {
     void aMissingImagePartIsRejected() {
         MvcTestResult result = mvc.post()
                 .uri(URI)
-                .header("X-Installation-Id", INSTALLATION_ID)
+                .header("Authorization", bearer(ACCOUNT))
                 .multipart()
                 .param("other", "x")
                 .exchange();
@@ -145,7 +152,7 @@ class GenerationApiTest {
     void aNonMultipartRequestIsRejected() {
         MvcTestResult result = mvc.post()
                 .uri(URI)
-                .header("X-Installation-Id", INSTALLATION_ID)
+                .header("Authorization", bearer(ACCOUNT))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{}")
                 .exchange();
@@ -166,12 +173,20 @@ class GenerationApiTest {
         assertThat(result).headers().containsHeader("Allow");
     }
 
-    private MvcTestResult generate(String installationId, byte[] image) {
+    private MvcTestResult generate(String account, byte[] image) {
+        return generateWithAuthorization(bearer(account), image);
+    }
+
+    private MvcTestResult generateWithAuthorization(String authorization, byte[] image) {
         var request = mvc.post().uri(URI);
-        if (installationId != null) {
-            request.header("X-Installation-Id", installationId);
+        if (authorization != null) {
+            request.header("Authorization", authorization);
         }
         return request.multipart().file("image", image).exchange();
+    }
+
+    private String bearer(String account) {
+        return "Bearer " + issuer.issue(account).token();
     }
 
     private static void assertError(MvcTestResult result, int status, String code) {

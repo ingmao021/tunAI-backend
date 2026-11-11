@@ -2,6 +2,7 @@ package com.tunai.api.adapter.in.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.tunai.api.adapter.out.auth.HmacSessionIssuer;
 import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -9,6 +10,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 
@@ -27,6 +29,9 @@ class UploadLimitTest {
     @LocalServerPort
     int port;
 
+    @Autowired
+    HmacSessionIssuer issuer;
+
     @Test
     void anUploadOverTheLimitAnswers413ProblemJson() throws Exception {
         byte[] image = new byte[11 * 1024 * 1024];
@@ -37,7 +42,9 @@ class UploadLimitTest {
         HttpResponse<String> response = HttpClient.newHttpClient()
                 .send(
                         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/generations"))
-                                .header("X-Installation-Id", "3f1c2a9e-6d0b-4e8a-9f7c-2b5d1e4a6c80")
+                                .header(
+                                        "Authorization",
+                                        "Bearer " + issuer.issue("demo").token())
                                 .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
                                 .POST(HttpRequest.BodyPublishers.ofByteArray(multipart(image)))
                                 .build(),

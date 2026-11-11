@@ -53,6 +53,12 @@ tunai:
     per-ip: ${TUNAI_QUOTA_PER_IP:2}
     global-daily: ${TUNAI_QUOTA_GLOBAL_DAILY:2}
     timezone: ${TUNAI_QUOTA_TIMEZONE:America/Bogota}
+  # Inicio de sesión de TunAI Desktop. users = "usuario:hash,usuario:hash" con hashes de PasswordHash (nunca contraseñas
+  # en texto plano); token-secret firma los tokens (≥32 caracteres aleatorios). Ambos solo por variables de entorno
+  auth:
+    users: ${TUNAI_AUTH_USERS:}
+    token-secret: ${TUNAI_AUTH_TOKEN_SECRET:}
+    session-ttl: ${TUNAI_AUTH_SESSION_TTL:30d}
   # RNF-BE-012: métricas tunai.* en el log, solo si hubo actividad en el intervalo
   metrics:
     log-interval: ${TUNAI_METRICS_LOG_INTERVAL:5m}

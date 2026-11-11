@@ -6,7 +6,7 @@ import org.springframework.http.HttpHeaders;
 
 /**
  * Headers de cuota (RF-BE-015). {@code X-Quota-Reset} va en ISO-8601 UTC. {@code X-Credits-Balance} y
- * {@code X-Credits-Per-Model} llevan el saldo de créditos de la instalación y el costo de cada modelo.
+ * {@code X-Credits-Per-Model} llevan el saldo de créditos de la cuenta y el costo de cada modelo.
  */
 final class QuotaHeaders {
 
