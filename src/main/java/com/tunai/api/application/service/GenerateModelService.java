@@ -18,7 +18,7 @@ import java.util.Objects;
  * diario de IP y global se mantiene, para que esos límites sigan acotando el gasto real.
  *
  * <p>Una foto con una generación ya empezada (un intento anterior agotó la espera) se retoma en vez de crear otra: solo
- * se reservan los créditos de la cuenta. Una petición marcada {@code resumeOnly} únicamente puede retomar.
+ * se reservan los créditos de la instalación. Una petición marcada {@code resumeOnly} únicamente puede retomar.
  */
 public class GenerateModelService implements GenerateModelUseCase {
 
@@ -56,8 +56,8 @@ public class GenerateModelService implements GenerateModelUseCase {
                         true);
             }
             QuotaReservation reservation = resuming
-                    ? quota.tryReserveResuming(command.accountId(), command.clientIp())
-                    : quota.tryReserve(command.accountId(), command.clientIp());
+                    ? quota.tryReserveResuming(command.installationId(), command.clientIp())
+                    : quota.tryReserve(command.installationId(), command.clientIp());
             boolean settled = false;
             try {
                 GeneratedModel model =

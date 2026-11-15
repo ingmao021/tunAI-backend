@@ -4,7 +4,7 @@ import com.tunai.api.domain.model.QuotaStatus;
 import java.util.Objects;
 
 /**
- * La cuenta no tiene créditos para otro modelo (RN-02). Los créditos no se renuevan solos, así que no lleva
+ * La instalación no tiene créditos para otro modelo (RN-02). Los créditos no se renuevan solos, así que no lleva
  * {@code Retry-After}; se traduce a {@code 402 INSUFFICIENT_CREDITS} con los headers de cuota y el cliente ofrece los
  * planes.
  */

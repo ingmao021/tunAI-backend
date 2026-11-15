@@ -1,9 +1,8 @@
 package com.tunai.api.config;
 
-import com.tunai.api.adapter.in.web.AccountIdArgumentResolver;
 import com.tunai.api.adapter.in.web.ClientIpResolver;
+import com.tunai.api.adapter.in.web.InstallationIdArgumentResolver;
 import com.tunai.api.adapter.in.web.TraceIdFilter;
-import com.tunai.api.application.port.in.AuthenticateUseCase;
 import java.util.List;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -18,10 +17,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class WebConfiguration implements WebMvcConfigurer {
 
     private final ClientIpProperties clientIp;
-    private final AuthenticateUseCase authenticate;
 
-    public WebConfiguration(ClientIpProperties clientIp, AuthenticateUseCase authenticate) {
-        this.authenticate = authenticate;
+    public WebConfiguration(ClientIpProperties clientIp) {
         this.clientIp = clientIp;
     }
 
@@ -34,7 +31,7 @@ public class WebConfiguration implements WebMvcConfigurer {
 
     @Override
     public void addArgumentResolvers(List<HandlerMethodArgumentResolver> resolvers) {
-        resolvers.add(new AccountIdArgumentResolver(authenticate));
+        resolvers.add(new InstallationIdArgumentResolver());
         resolvers.add(new ClientIpResolver(clientIp.trustedHeader(), clientIp.trustedProxies()));
     }
 }

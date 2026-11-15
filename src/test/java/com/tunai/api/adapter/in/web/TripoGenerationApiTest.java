@@ -10,7 +10,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import com.tunai.api.TestImages;
-import com.tunai.api.adapter.out.auth.HmacSessionIssuer;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -61,9 +60,6 @@ class TripoGenerationApiTest {
 
     @Autowired
     MockMvcTester mvc;
-
-    @Autowired
-    HmacSessionIssuer issuer;
 
     /** Para que cada prueba use una foto distinta. */
     private static final AtomicInteger PHOTOS = new AtomicInteger();
@@ -240,7 +236,7 @@ class TripoGenerationApiTest {
     private MvcTestResult generate() {
         return mvc.post()
                 .uri("/api/v1/generations")
-                .header("Authorization", "Bearer " + issuer.issue(installation).token())
+                .header("X-Installation-Id", installation)
                 .multipart()
                 .file("image", photo)
                 .exchange();
@@ -250,7 +246,7 @@ class TripoGenerationApiTest {
     private MvcTestResult resume() {
         return mvc.post()
                 .uri("/api/v1/generations")
-                .header("Authorization", "Bearer " + issuer.issue(installation).token())
+                .header("X-Installation-Id", installation)
                 .header(GenerationController.RESUME_HEADER, "true")
                 .multipart()
                 .file("image", photo)
@@ -260,7 +256,7 @@ class TripoGenerationApiTest {
     private int remaining() {
         MvcTestResult quota = mvc.get()
                 .uri("/api/v1/quota")
-                .header("Authorization", "Bearer " + issuer.issue(installation).token())
+                .header("X-Installation-Id", installation)
                 .exchange();
         return Integer.parseInt(quota.getResponse().getHeader("X-Quota-Remaining"));
     }

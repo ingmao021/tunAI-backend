@@ -7,9 +7,8 @@ import org.springframework.http.HttpStatus;
 /** Catálogo de errores del contrato (§15.4). El campo {@code code} es estable; el cliente decide por él. */
 enum ErrorCode {
     BAD_REQUEST(HttpStatus.BAD_REQUEST, "Petición inválida"),
-    UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "Sesión no válida"),
+    INVALID_INSTALLATION_ID(HttpStatus.BAD_REQUEST, "ID de instalación inválido"),
     INVALID_IMAGE(HttpStatus.BAD_REQUEST, "Imagen inválida"),
-    INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "Credenciales incorrectas"),
     NOT_FOUND(HttpStatus.NOT_FOUND, "Recurso no encontrado"),
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "Método no permitido"),
     IMAGE_TOO_LARGE(HttpStatus.CONTENT_TOO_LARGE, "Imagen demasiado grande"),

@@ -7,8 +7,8 @@ import com.tunai.api.MutableClock;
 import com.tunai.api.domain.exception.GlobalLimitReachedException;
 import com.tunai.api.domain.exception.InsufficientCreditsException;
 import com.tunai.api.domain.exception.QuotaExceededException;
-import com.tunai.api.domain.model.AccountId;
 import com.tunai.api.domain.model.ClientIp;
+import com.tunai.api.domain.model.InstallationId;
 import com.tunai.api.domain.model.QuotaLimits;
 import com.tunai.api.domain.model.QuotaReservation;
 import com.tunai.api.domain.model.QuotaStatus;
@@ -55,8 +55,8 @@ public abstract class QuotaStorePortContract {
         return new QuotaStatus(limit, remaining, NEXT_MIDNIGHT, credits, COST);
     }
 
-    private static AccountId newInstallation() {
-        return new AccountId(UUID.randomUUID().toString());
+    private static InstallationId newInstallation() {
+        return new InstallationId(UUID.randomUUID());
     }
 
     private static ClientIp ip(String value) {
@@ -73,7 +73,7 @@ public abstract class QuotaStorePortContract {
     @Test
     void committedGenerationsSpendCredits() {
         QuotaStorePort store = store(2, 4, 6);
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
 
         QuotaStatus afterCommit = store.commit(store.tryReserve(installation, ip("1.1.1.1")));
 
@@ -84,7 +84,7 @@ public abstract class QuotaStorePortContract {
     @Test
     void withoutCreditsForAnotherModelTheReservationIsRejectedWithoutRetryAfter() {
         QuotaStorePort store = store(2, 4, 6);
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
         store.commit(store.tryReserve(installation, ip("1.1.1.1")));
         store.commit(store.tryReserve(installation, ip("1.1.1.1")));
 
@@ -98,7 +98,7 @@ public abstract class QuotaStorePortContract {
     @Test
     void leftoverCreditsBelowTheCostAreReportedButCannotBeSpent() {
         QuotaStorePort store = createStore(new QuotaLimits(40, COST, 4, 6, BOGOTA), clock);
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
         store.commit(store.tryReserve(installation, ip("1.1.1.2")));
         store.commit(store.tryReserve(installation, ip("1.1.1.2")));
 
@@ -113,7 +113,7 @@ public abstract class QuotaStorePortContract {
         store.commit(store.tryReserve(newInstallation(), ip("2.2.2.2")));
         store.commit(store.tryReserve(newInstallation(), ip("2.2.2.2")));
 
-        AccountId invented = newInstallation();
+        InstallationId invented = newInstallation();
         assertThatThrownBy(() -> store.tryReserve(invented, ip("2.2.2.2")))
                 .isInstanceOfSatisfying(QuotaExceededException.class, e -> {
                     assertThat(e.status()).isEqualTo(status(2, 0, 30));
@@ -148,7 +148,7 @@ public abstract class QuotaStorePortContract {
         store.commit(store.tryReserve(newInstallation(), ip("5.5.5.1")));
         store.commit(store.tryReserve(newInstallation(), ip("5.5.5.2")));
 
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
         assertThatThrownBy(() -> store.tryReserve(installation, ip("5.5.5.3")))
                 .isInstanceOfSatisfying(
                         GlobalLimitReachedException.class,
@@ -159,7 +159,7 @@ public abstract class QuotaStorePortContract {
     @Test
     void releasingAReservationGivesTheCreditsBack() {
         QuotaStorePort store = store(1, 1, 1);
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
 
         store.release(store.tryReserve(installation, ip("6.6.6.6")));
 
@@ -170,7 +170,7 @@ public abstract class QuotaStorePortContract {
     @Test
     void releaseIsIdempotentAndHasNoEffectAfterCommit() {
         QuotaStorePort store = store(2, 2, 2);
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
         QuotaReservation committed = store.tryReserve(installation, ip("7.7.7.7"));
         store.commit(committed);
         QuotaReservation released = store.tryReserve(installation, ip("7.7.7.7"));
@@ -186,7 +186,7 @@ public abstract class QuotaStorePortContract {
     @Test
     void releasingKeepingDailyUsageGivesTheCreditsBackButSpendsTheDailyLimits() {
         QuotaStorePort store = store(2, 1, 1);
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
 
         store.releaseKeepingDailyUsage(store.tryReserve(installation, ip("11.0.0.1")));
 
@@ -200,7 +200,7 @@ public abstract class QuotaStorePortContract {
     @Test
     void releasingKeepingDailyUsageIsIdempotent() {
         QuotaStorePort store = store(2, 2, 2);
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
         QuotaReservation reservation = store.tryReserve(installation, ip("12.0.0.1"));
 
         store.releaseKeepingDailyUsage(reservation);
@@ -216,7 +216,7 @@ public abstract class QuotaStorePortContract {
     @Test
     void resumingSpendsCreditsButNotTheDailyLimitsAlreadyCounted() {
         QuotaStorePort store = store(2, 1, 1);
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
         QuotaReservation first = store.tryReserve(installation, ip("14.0.0.1"));
         store.releaseKeepingDailyUsage(first);
         assertThatThrownBy(() -> store.tryReserve(installation, ip("14.0.0.1")))
@@ -234,7 +234,7 @@ public abstract class QuotaStorePortContract {
     @Test
     void releasingAResumedReservationGivesTheCreditsBackAndLeavesTheDailyLimitsAlone() {
         QuotaStorePort store = store(2, 1, 1);
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
         store.releaseKeepingDailyUsage(store.tryReserve(installation, ip("15.0.0.1")));
 
         store.release(store.tryReserveResuming(installation, ip("15.0.0.1")));
@@ -247,7 +247,7 @@ public abstract class QuotaStorePortContract {
     @Test
     void resumingStillRequiresCredits() {
         QuotaStorePort store = store(1, 5, 5);
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
         store.commit(store.tryReserve(installation, ip("16.0.0.1")));
 
         assertThatThrownBy(() -> store.tryReserveResuming(installation, ip("16.0.0.1")))
@@ -257,7 +257,7 @@ public abstract class QuotaStorePortContract {
     @Test
     void aChargedReservationFromYesterdayDoesNotSpendTodaysLimits() {
         QuotaStorePort store = store(2, 1, 1);
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
         QuotaReservation yesterday = store.tryReserve(installation, ip("13.0.0.1"));
 
         clock.set(NEXT_MIDNIGHT.plusSeconds(10));
@@ -270,7 +270,7 @@ public abstract class QuotaStorePortContract {
     @Test
     void reservationsInProgressCountAsSpent() {
         QuotaStorePort store = store(2, 4, 4);
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
         store.tryReserve(installation, ip("8.8.8.8"));
         store.tryReserve(installation, ip("8.8.8.8"));
 
@@ -282,7 +282,7 @@ public abstract class QuotaStorePortContract {
     @Test
     void creditsDoNotResetAtMidnightButTheIpLimitDoes() {
         QuotaStorePort store = store(1, 1, 1);
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
         store.commit(store.tryReserve(installation, ip("9.9.9.9")));
         assertThatThrownBy(() -> store.tryReserve(newInstallation(), ip("9.9.9.9")))
                 .isInstanceOf(QuotaExceededException.class);
@@ -300,7 +300,7 @@ public abstract class QuotaStorePortContract {
     @Test
     void aReservationFromYesterdaySpendsCreditsButNotTodaysIpLimit() {
         QuotaStorePort store = store(2, 1, 1);
-        AccountId installation = newInstallation();
+        InstallationId installation = newInstallation();
         QuotaReservation yesterday = store.tryReserve(installation, ip("10.0.0.1"));
 
         clock.set(NEXT_MIDNIGHT.plusSeconds(10));

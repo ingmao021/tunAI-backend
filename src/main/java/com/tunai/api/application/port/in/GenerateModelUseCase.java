@@ -1,8 +1,8 @@
 package com.tunai.api.application.port.in;
 
-import com.tunai.api.domain.model.AccountId;
 import com.tunai.api.domain.model.ClientIp;
 import com.tunai.api.domain.model.GeneratedModel;
+import com.tunai.api.domain.model.InstallationId;
 import com.tunai.api.domain.model.QuotaStatus;
 import com.tunai.api.domain.model.VehicleImage;
 import java.util.Objects;
@@ -16,17 +16,17 @@ public interface GenerateModelUseCase {
      * @param resumeOnly {@code true} cuando el cliente retoma por su cuenta una generación que agotó el tiempo: solo
      *     puede unirse a la que ya existe, nunca crear otra (el usuario no confirmó un modelo nuevo)
      */
-    record GenerateCommand(AccountId accountId, ClientIp clientIp, VehicleImage image, boolean resumeOnly) {
+    record GenerateCommand(InstallationId installationId, ClientIp clientIp, VehicleImage image, boolean resumeOnly) {
 
         public GenerateCommand {
-            Objects.requireNonNull(accountId, "accountId");
+            Objects.requireNonNull(installationId, "installationId");
             Objects.requireNonNull(clientIp, "clientIp");
             Objects.requireNonNull(image, "image");
         }
 
         /** Generación pedida y confirmada por el usuario. */
-        public GenerateCommand(AccountId accountId, ClientIp clientIp, VehicleImage image) {
-            this(accountId, clientIp, image, false);
+        public GenerateCommand(InstallationId installationId, ClientIp clientIp, VehicleImage image) {
+            this(installationId, clientIp, image, false);
         }
     }
 

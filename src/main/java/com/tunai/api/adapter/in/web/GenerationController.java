@@ -3,8 +3,8 @@ package com.tunai.api.adapter.in.web;
 import com.tunai.api.application.port.in.GenerateModelUseCase;
 import com.tunai.api.application.port.in.GenerateModelUseCase.GenerateCommand;
 import com.tunai.api.application.port.in.GenerateModelUseCase.GenerationResult;
-import com.tunai.api.domain.model.AccountId;
 import com.tunai.api.domain.model.ClientIp;
+import com.tunai.api.domain.model.InstallationId;
 import com.tunai.api.domain.model.VehicleImage;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -46,7 +46,7 @@ public class GenerationController {
     /** Escribe el GLB directamente en la respuesta para no copiar en memoria un modelo de varios MB (RNF-BE-003). */
     @PostMapping(path = "/generations", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public void generate(
-            AccountId accountId,
+            InstallationId installationId,
             ClientIp clientIp,
             @RequestPart(name = "image", required = false) MultipartFile image,
             @RequestHeader(name = RESUME_HEADER, required = false) String resume,
@@ -55,12 +55,12 @@ public class GenerationController {
         VehicleImage vehicleImage = imageMapper.toVehicleImage(image);
         boolean resumeOnly = "true".equalsIgnoreCase(resume);
         GenerationResult result =
-                generateModel.generate(new GenerateCommand(accountId, clientIp, vehicleImage, resumeOnly));
+                generateModel.generate(new GenerateCommand(installationId, clientIp, vehicleImage, resumeOnly));
 
-        // RNF-BE-009: sin imagen ni modelo; IP enmascarada e cuenta como hash
+        // RNF-BE-009: sin imagen ni modelo; IP enmascarada e instalación como hash
         log.info(
-                "Generación exitosa: cuenta {}, IP {}, {} bytes, cuota restante {}/{}, créditos {}",
-                accountId.hashForLogs(),
+                "Generación exitosa: instalación {}, IP {}, {} bytes, cuota restante {}/{}, créditos {}",
+                installationId.hashForLogs(),
                 clientIp.masked(),
                 result.model().sizeInBytes(),
                 result.quota().remaining(),

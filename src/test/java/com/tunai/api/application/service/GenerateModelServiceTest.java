@@ -13,10 +13,10 @@ import com.tunai.api.domain.exception.ProviderRejectedException;
 import com.tunai.api.domain.exception.ProviderTimeoutException;
 import com.tunai.api.domain.exception.QuotaExceededException;
 import com.tunai.api.domain.exception.ServiceBusyException;
-import com.tunai.api.domain.model.AccountId;
 import com.tunai.api.domain.model.ClientIp;
 import com.tunai.api.domain.model.GeneratedModel;
 import com.tunai.api.domain.model.ImageFormat;
+import com.tunai.api.domain.model.InstallationId;
 import com.tunai.api.domain.model.QuotaReservation;
 import com.tunai.api.domain.model.QuotaStatus;
 import com.tunai.api.domain.model.VehicleImage;
@@ -40,7 +40,7 @@ class GenerateModelServiceTest {
     private static final QuotaStatus AFTER_COMMIT =
             new QuotaStatus(3, 2, Instant.parse("2026-10-10T05:00:00Z"), 30, 15);
     private static final GenerateCommand COMMAND = new GenerateCommand(
-            new AccountId(UUID.randomUUID().toString()),
+            new InstallationId(UUID.randomUUID()),
             ClientIp.parse("1.2.3.4").orElseThrow(),
             new VehicleImage(new byte[] {1}, ImageFormat.JPEG, 512, 512));
 
@@ -211,7 +211,7 @@ class GenerateModelServiceTest {
     @Test
     void aResumeOnlyRequestWithNothingPendingNeverStartsAGeneration() {
         GenerateCommand resumeOnly =
-                new GenerateCommand(COMMAND.accountId(), COMMAND.clientIp(), COMMAND.image(), true);
+                new GenerateCommand(COMMAND.installationId(), COMMAND.clientIp(), COMMAND.image(), true);
 
         assertThatThrownBy(() -> service(succeeding(), 1024).generate(resumeOnly))
                 .isInstanceOfSatisfying(
@@ -223,7 +223,7 @@ class GenerateModelServiceTest {
     @Test
     void aResumeOnlyRequestJoinsThePendingGeneration() {
         GenerateCommand resumeOnly =
-                new GenerateCommand(COMMAND.accountId(), COMMAND.clientIp(), COMMAND.image(), true);
+                new GenerateCommand(COMMAND.installationId(), COMMAND.clientIp(), COMMAND.image(), true);
 
         GenerationResult result = service(pending(), 1024).generate(resumeOnly);
 
@@ -267,19 +267,19 @@ class GenerateModelServiceTest {
         boolean failOnCommit;
 
         @Override
-        public QuotaReservation tryReserve(AccountId accountId, ClientIp clientIp) {
+        public QuotaReservation tryReserve(InstallationId installationId, ClientIp clientIp) {
             events.add("reserve");
             if (rejectReserve) {
                 throw new QuotaExceededException(
                         "agotada", new QuotaStatus(2, 0, Instant.EPOCH, 45, 15), Duration.ofHours(1));
             }
-            return new QuotaReservation(UUID.randomUUID(), accountId, clientIp, LocalDate.of(2026, 10, 9));
+            return new QuotaReservation(UUID.randomUUID(), installationId, clientIp, LocalDate.of(2026, 10, 9));
         }
 
         @Override
-        public QuotaReservation tryReserveResuming(AccountId accountId, ClientIp clientIp) {
+        public QuotaReservation tryReserveResuming(InstallationId installationId, ClientIp clientIp) {
             events.add("reserveResuming");
-            return new QuotaReservation(UUID.randomUUID(), accountId, clientIp, LocalDate.of(2026, 10, 9), false);
+            return new QuotaReservation(UUID.randomUUID(), installationId, clientIp, LocalDate.of(2026, 10, 9), false);
         }
 
         @Override
@@ -302,7 +302,7 @@ class GenerateModelServiceTest {
         }
 
         @Override
-        public QuotaStatus status(AccountId accountId, ClientIp clientIp) {
+        public QuotaStatus status(InstallationId installationId, ClientIp clientIp) {
             throw new UnsupportedOperationException();
         }
     }

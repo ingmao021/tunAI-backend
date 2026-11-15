@@ -4,7 +4,7 @@
 |---|---|
 | Producto | TunAI — visualización y personalización virtual de vehículos en 3D |
 | Componente | API intermediaria de generación 3D (repositorio **backend**) |
-| Versión del documento | 1.13 |
+| Versión del documento | 1.14 |
 | Fecha | 2026-11-15 (v1.0: 2026-10-03) |
 | Autor | Anderson |
 | Estado | Aprobado para MVP (con puntos **PENDIENTE DE DEFINIR / VALIDAR**) |
@@ -35,6 +35,7 @@
 | 1.11 | 2026-10-15 | Protección del saldo de Tripo tras la revisión de huecos: consulta del saldo antes de cada generación (RF-BE-020, `TUNAI_TRIPO_MIN_BALANCE`); los fallos posteriores a crear la tarea mantienen el uso diario de IP y global (`releaseKeepingDailyUsage`, §13.5); reintentos de la consulta de la tarea y de la descarga; plazo duro de `max-wait` para toda la generación (§13.9); el GLB ya no se copia en memoria (RNF-BE-003) |
 | 1.12 | 2026-10-15 | Revisión de deuda técnica: el límite por IP agrupa IPv6 por su prefijo `/64` canónico (RN-10); limitación aceptada de la desconexión del cliente (§13.9); sin Lombok; la foto ya no se copia en `VehicleImage`; JaCoCo exige 90 % de líneas en dominio y aplicación y 85 % en adaptadores (Anexo D) |
 | 1.13 | 2026-11-15 | **Timeout retomable**, tras el incidente del 9-nov-2026: Tripo tardó 2–4 min, `max-wait` era el plazo de toda la generación (85 s) y cada `Reintentar` creó otra tarea (3 tareas, 120 créditos, 0 modelos entregados). Ahora la generación sigue en segundo plano y la misma foto la retoma en vez de crear otra tarea (§13.9, RF-BE-025); `504` con `resumable` y header `X-Generation-Resume` (§15.4); variable `TUNAI_TRIPO_TASK_DEADLINE` (Anexo A); RN-13, R-BE-14, P-BE-10 y Anexo E actualizados |
+| 1.14 | 2026-11-15 | **Se retira el inicio de sesión** (añadido el 11-nov-2026 en `93bb160`): la cuota vuelve a identificarse por `X-Installation-Id` (§5, RF-BE-004, `400 INVALID_INSTALLATION_ID`) y desaparecen `POST /api/v1/auth/login`, el token `Bearer`, las variables `TUNAI_AUTH_*`, `UNAUTHORIZED` e `INVALID_CREDENTIALS`. No aportaba nada al usuario y dejó fuera a la app 1.0.1, que no inicia sesión y recibía `401` en todas sus peticiones. Sin login, el gasto de Tripo solo lo acotan los límites por IP y global (RN-10, RN-11). |
 
 **Convenciones:** igual que el PRD del frontend.
 - Prioridad MoSCoW (Must, Should, Could, Won't).

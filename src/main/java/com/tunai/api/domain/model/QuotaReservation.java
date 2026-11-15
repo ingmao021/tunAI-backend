@@ -10,16 +10,17 @@ import java.util.UUID;
  * @param countsDaily {@code false} cuando la reserva retoma una generación que el proveedor ya empezó y cuyo uso diario
  *     de IP y global quedó contado en el intento anterior: así reintentar no cuenta dos veces
  */
-public record QuotaReservation(UUID id, AccountId accountId, ClientIp clientIp, LocalDate day, boolean countsDaily) {
+public record QuotaReservation(
+        UUID id, InstallationId installationId, ClientIp clientIp, LocalDate day, boolean countsDaily) {
 
     public QuotaReservation {
         Objects.requireNonNull(id, "id");
-        Objects.requireNonNull(accountId, "accountId");
+        Objects.requireNonNull(installationId, "installationId");
         Objects.requireNonNull(clientIp, "clientIp");
         Objects.requireNonNull(day, "day");
     }
 
-    public QuotaReservation(UUID id, AccountId accountId, ClientIp clientIp, LocalDate day) {
-        this(id, accountId, clientIp, day, true);
+    public QuotaReservation(UUID id, InstallationId installationId, ClientIp clientIp, LocalDate day) {
+        this(id, installationId, clientIp, day, true);
     }
 }

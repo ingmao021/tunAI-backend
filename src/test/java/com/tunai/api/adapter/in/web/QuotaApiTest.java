@@ -5,7 +5,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import com.tunai.api.TestImages;
-import com.tunai.api.adapter.out.auth.HmacSessionIssuer;
 import com.tunai.api.application.port.out.ModelGeneratorPort;
 import com.tunai.api.domain.model.GeneratedModel;
 import java.nio.charset.StandardCharsets;
@@ -45,9 +44,6 @@ class QuotaApiTest {
     @MockitoBean
     ModelGeneratorPort generator;
 
-    @Autowired
-    HmacSessionIssuer issuer;
-
     @BeforeEach
     void stubGenerator() {
         when(generator.generate(any()))
@@ -83,13 +79,13 @@ class QuotaApiTest {
     }
 
     @Test
-    void quotaEndpointRequiresASession() {
+    void quotaEndpointRequiresTheInstallationId() {
         MvcTestResult result = mvc.get().uri("/api/v1/quota").exchange();
 
         assertThat(result)
-                .hasStatus(401)
+                .hasStatus(400)
                 .bodyJson()
-                .hasPathSatisfying("$.code", v -> assertThat(v).asString().isEqualTo("UNAUTHORIZED"));
+                .hasPathSatisfying("$.code", v -> assertThat(v).asString().isEqualTo("INVALID_INSTALLATION_ID"));
     }
 
     @Test
@@ -127,7 +123,7 @@ class QuotaApiTest {
     void anInvalidImageDoesNotConsumeQuota() {
         MvcTestResult invalid = mvc.post()
                 .uri("/api/v1/generations")
-                .header("Authorization", bearer(installation))
+                .header("X-Installation-Id", installation)
                 .header("CF-Connecting-IP", ip)
                 .multipart()
                 .file("image", TestImages.png(100, 100))
@@ -140,7 +136,7 @@ class QuotaApiTest {
     }
 
     @Test
-    void inventedAccountIdsAreStoppedByTheIpLimit() {
+    void inventedInstallationIdsAreStoppedByTheIpLimit() {
         generate(UUID.randomUUID().toString(), ip);
         generate(UUID.randomUUID().toString(), ip);
         generate(UUID.randomUUID().toString(), ip);
@@ -160,32 +156,28 @@ class QuotaApiTest {
                 .hasStatus(429);
     }
 
-    private String bearer(String account) {
-        return "Bearer " + issuer.issue(account).token();
-    }
-
-    private MvcTestResult quota(String accountId, String clientIp) {
+    private MvcTestResult quota(String installationId, String clientIp) {
         return mvc.get()
                 .uri("/api/v1/quota")
-                .header("Authorization", bearer(accountId))
+                .header("X-Installation-Id", installationId)
                 .header("CF-Connecting-IP", clientIp)
                 .exchange();
     }
 
-    private MvcTestResult generate(String accountId, String clientIp) {
+    private MvcTestResult generate(String installationId, String clientIp) {
         return mvc.post()
                 .uri("/api/v1/generations")
-                .header("Authorization", bearer(accountId))
+                .header("X-Installation-Id", installationId)
                 .header("CF-Connecting-IP", clientIp)
                 .multipart()
                 .file("image", TestImages.jpeg(640, 512))
                 .exchange();
     }
 
-    private MvcTestResult generateSpoofing(String accountId, String clientIp, String spoofed) {
+    private MvcTestResult generateSpoofing(String installationId, String clientIp, String spoofed) {
         return mvc.post()
                 .uri("/api/v1/generations")
-                .header("Authorization", bearer(accountId))
+                .header("X-Installation-Id", installationId)
                 .header("CF-Connecting-IP", clientIp)
                 .header("X-Forwarded-For", spoofed + ", " + clientIp)
                 .multipart()

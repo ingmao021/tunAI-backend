@@ -1,7 +1,7 @@
 package com.tunai.api.application.port.out;
 
-import com.tunai.api.domain.model.AccountId;
 import com.tunai.api.domain.model.ClientIp;
+import com.tunai.api.domain.model.InstallationId;
 import com.tunai.api.domain.model.QuotaReservation;
 import com.tunai.api.domain.model.QuotaStatus;
 
@@ -12,23 +12,23 @@ import com.tunai.api.domain.model.QuotaStatus;
 public interface QuotaStorePort {
 
     /**
-     * Reserva un cupo de forma atómica en los contadores de cuenta, IP y global.
+     * Reserva un cupo de forma atómica en los contadores de instalación, IP y global.
      *
-     * @throws com.tunai.api.domain.exception.InsufficientCreditsException si la cuenta no tiene créditos para otro
+     * @throws com.tunai.api.domain.exception.InsufficientCreditsException si la instalación no tiene créditos para otro
      *     modelo
      * @throws com.tunai.api.domain.exception.QuotaExceededException si se agotó el límite diario de la IP
      * @throws com.tunai.api.domain.exception.GlobalLimitReachedException si se agotó el límite global diario
      */
-    QuotaReservation tryReserve(AccountId accountId, ClientIp clientIp);
+    QuotaReservation tryReserve(InstallationId installationId, ClientIp clientIp);
 
     /**
      * Reserva para retomar una generación que el proveedor ya empezó en un intento anterior (que agotó el tiempo): solo
-     * exige y reserva los créditos de la cuenta, porque el uso diario de IP y global ya se contó entonces. La
+     * exige y reserva los créditos de la instalación, porque el uso diario de IP y global ya se contó entonces. La
      * confirmación o liberación de esta reserva tampoco toca los contadores diarios.
      *
-     * @throws com.tunai.api.domain.exception.InsufficientCreditsException si la cuenta no tiene créditos
+     * @throws com.tunai.api.domain.exception.InsufficientCreditsException si la instalación no tiene créditos
      */
-    QuotaReservation tryReserveResuming(AccountId accountId, ClientIp clientIp);
+    QuotaReservation tryReserveResuming(InstallationId installationId, ClientIp clientIp);
 
     /** Convierte la reserva en una generación exitosa y devuelve el estado resultante. */
     QuotaStatus commit(QuotaReservation reservation);
@@ -37,12 +37,12 @@ public interface QuotaStorePort {
     void release(QuotaReservation reservation);
 
     /**
-     * La generación falló pero el proveedor pudo haberla cobrado: devuelve los créditos de la cuenta (el usuario
+     * La generación falló pero el proveedor pudo haberla cobrado: devuelve los créditos de la instalación (el usuario
      * no recibió modelo) y mantiene el uso diario de la IP y global, que protege el saldo del proveedor. Es
      * idempotente, como {@link #release}.
      */
     void releaseKeepingDailyUsage(QuotaReservation reservation);
 
     /** Estado actual sin consumir cuota (RF-BE-002). */
-    QuotaStatus status(AccountId accountId, ClientIp clientIp);
+    QuotaStatus status(InstallationId installationId, ClientIp clientIp);
 }
