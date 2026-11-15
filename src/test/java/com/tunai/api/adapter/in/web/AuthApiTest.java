@@ -16,7 +16,17 @@ import org.springframework.test.web.servlet.assertj.MvcTestResult;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-@SpringBootTest(properties = "tunai.auth.token-secret=secreto-de-prueba-con-mas-de-32-caracteres")
+/**
+ * Inicio de sesión de extremo a extremo. Arranca la aplicación completa, que no inicia sin clave de Tripo (RNF-BE-015):
+ * la clave es de prueba y la URL de Tripo no existe, así la prueba no depende de que la clave real esté en el entorno
+ * (en CI no está) y ninguna petición puede llegar al proveedor (RN-15).
+ */
+@SpringBootTest(
+        properties = {
+            "tunai.auth.token-secret=secreto-de-prueba-con-mas-de-32-caracteres",
+            "tunai.tripo.api-key=tsk_test-auth",
+            "tunai.tripo.base-url=http://127.0.0.1:9/v3"
+        })
 @AutoConfigureMockMvc
 class AuthApiTest {
 
