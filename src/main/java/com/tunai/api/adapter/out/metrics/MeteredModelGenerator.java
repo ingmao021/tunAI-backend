@@ -11,6 +11,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 /**
  * Decorador que mide cada llamada al proveedor (RNF-BE-012), sin que la aplicación dependa de Micrometer:
@@ -39,10 +40,19 @@ public final class MeteredModelGenerator implements ModelGeneratorPort {
 
     @Override
     public GeneratedModel generate(VehicleImage image) {
+        return measure(() -> delegate.generate(image));
+    }
+
+    @Override
+    public GeneratedModel resume(VehicleImage image) {
+        return measure(() -> delegate.resume(image));
+    }
+
+    private GeneratedModel measure(Supplier<GeneratedModel> call) {
         Timer.Sample sample = Timer.start(registry);
         String result = "error";
         try {
-            GeneratedModel model = delegate.generate(image);
+            GeneratedModel model = call.get();
             result = "success";
             return model;
         } catch (RuntimeException e) {
@@ -61,6 +71,11 @@ public final class MeteredModelGenerator implements ModelGeneratorPort {
                     .register(registry)
                     .increment();
         }
+    }
+
+    @Override
+    public boolean hasPendingGeneration(VehicleImage image) {
+        return delegate.hasPendingGeneration(image);
     }
 
     private static String classify(RuntimeException e) {

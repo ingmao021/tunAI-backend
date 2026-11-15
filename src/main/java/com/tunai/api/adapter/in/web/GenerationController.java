@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
@@ -24,6 +25,13 @@ import org.springframework.web.multipart.MultipartFile;
 public class GenerationController {
 
     static final String GLB_MEDIA_TYPE = "model/gltf-binary";
+
+    /**
+     * Lo envía el cliente cuando retoma por su cuenta, sin preguntar al usuario, una generación que respondió
+     * {@code 504} con {@code "resumable": true}. Con este header la petición solo puede unirse a esa generación: si ya
+     * no existe se responde {@code 502} y nunca se crea otra tarea cobrada.
+     */
+    static final String RESUME_HEADER = "X-Generation-Resume";
 
     private static final Logger log = LoggerFactory.getLogger(GenerationController.class);
 
@@ -41,10 +49,13 @@ public class GenerationController {
             AccountId accountId,
             ClientIp clientIp,
             @RequestPart(name = "image", required = false) MultipartFile image,
+            @RequestHeader(name = RESUME_HEADER, required = false) String resume,
             HttpServletResponse response)
             throws IOException {
         VehicleImage vehicleImage = imageMapper.toVehicleImage(image);
-        GenerationResult result = generateModel.generate(new GenerateCommand(accountId, clientIp, vehicleImage));
+        boolean resumeOnly = "true".equalsIgnoreCase(resume);
+        GenerationResult result =
+                generateModel.generate(new GenerateCommand(accountId, clientIp, vehicleImage, resumeOnly));
 
         // RNF-BE-009: sin imagen ni modelo; IP enmascarada e cuenta como hash
         log.info(

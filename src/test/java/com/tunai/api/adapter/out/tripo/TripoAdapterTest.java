@@ -28,7 +28,10 @@ import com.tunai.api.domain.model.VehicleImage;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
@@ -55,7 +58,21 @@ class TripoAdapterTest {
             .options(wireMockConfig().dynamicPort())
             .build();
 
+    private final List<TripoAdapter> adapters = new ArrayList<>();
+
+    /** Tras un timeout la generación sigue en segundo plano: se corta para no pisar los stubs del siguiente test. */
+    @AfterEach
+    void stopBackgroundGenerations() {
+        adapters.forEach(TripoAdapter::cancelAll);
+    }
+
     private TripoAdapter adapter(Duration readTimeout, Duration maxWait, long maxModelBytes) {
+        TripoAdapter adapter = create(readTimeout, maxWait, maxModelBytes);
+        adapters.add(adapter);
+        return adapter;
+    }
+
+    private TripoAdapter create(Duration readTimeout, Duration maxWait, long maxModelBytes) {
         return TripoAdapter.create(
                 URI.create(tripo.baseUrl() + "/v3"),
                 API_KEY,
@@ -66,6 +83,32 @@ class TripoAdapterTest {
                 Duration.ofMillis(20),
                 maxWait,
                 maxModelBytes);
+    }
+
+    /** Adaptador cuya generación en segundo plano se abandona pronto, para probar ese plazo sin esperar minutos. */
+    private TripoAdapter adapterWithTaskDeadline(Duration maxWait, Duration taskDeadline) {
+        TripoAdapter adapter = TripoAdapter.create(
+                URI.create(tripo.baseUrl() + "/v3"),
+                API_KEY,
+                Duration.ofSeconds(2),
+                Duration.ofSeconds(5),
+                OPTIONS,
+                MIN_BALANCE,
+                Duration.ofMillis(20),
+                maxWait,
+                taskDeadline,
+                1024);
+        adapters.add(adapter);
+        return adapter;
+    }
+
+    /** Espera a que la generación en segundo plano termine sola (falle o caduque) y deje de estar pendiente. */
+    private static void awaitNoPendingGeneration(TripoAdapter adapter) throws InterruptedException {
+        long giveUp = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (adapter.hasPendingGeneration(JPEG)) {
+            assertThat(System.nanoTime()).as("la generación sigue pendiente").isLessThan(giveUp);
+            Thread.sleep(20);
+        }
     }
 
     private TripoAdapter adapter() {
@@ -298,6 +341,181 @@ class TripoAdapterTest {
                 .hasMessageContaining(TASK)
                 .matches(TripoAdapterTest::charged);
         tripo.verify(1, postRequestedFor(urlEqualTo("/v3/generation/image-to-model")));
+    }
+
+    /**
+     * Causa del gasto repetido: al vencer el plazo la tarea seguía y se cobraba, y cada reintento creaba otra. Ahora el
+     * reintento con la misma foto se une a la tarea en curso y recoge su modelo sin crear nada.
+     */
+    @Test
+    void aRetryAfterATimeoutResumesTheSameTaskInsteadOfCreatingAnother() {
+        uploadOk();
+        createOk();
+        json("GET", TASK_URL, 200, task("running", null));
+        TripoAdapter adapter = adapter(Duration.ofSeconds(5), Duration.ofMillis(300), 1024);
+        assertThat(adapter.hasPendingGeneration(JPEG)).isFalse();
+
+        assertThatThrownBy(() -> adapter.generate(JPEG))
+                .isInstanceOfSatisfying(
+                        ProviderTimeoutException.class,
+                        e -> assertThat(e.generationContinues()).isTrue());
+        assertThat(adapter.hasPendingGeneration(JPEG)).isTrue();
+
+        taskSucceeds();
+        modelReturns(GLB);
+        assertThat(adapter.generate(JPEG).toByteArray()).isEqualTo(GLB);
+
+        tripo.verify(1, postRequestedFor(urlEqualTo("/v3/files")));
+        tripo.verify(1, postRequestedFor(urlEqualTo("/v3/generation/image-to-model")));
+        assertThat(adapter.hasPendingGeneration(JPEG)).isFalse();
+    }
+
+    /** Si Tripo termina mientras nadie espera, el modelo queda guardado y el siguiente intento lo entrega. */
+    @Test
+    void aModelFinishedWhileNobodyWasWaitingIsDeliveredOnTheRetry() throws InterruptedException {
+        uploadOk();
+        createOk();
+        json("GET", TASK_URL, 200, task("running", null));
+        TripoAdapter adapter = adapter(Duration.ofSeconds(5), Duration.ofMillis(200), 1024);
+        assertThatThrownBy(() -> adapter.generate(JPEG)).isInstanceOf(ProviderTimeoutException.class);
+
+        taskSucceeds();
+        modelReturns(GLB);
+        Thread.sleep(500);
+
+        assertThat(adapter.generate(JPEG).toByteArray()).isEqualTo(GLB);
+        tripo.verify(1, postRequestedFor(urlEqualTo("/v3/generation/image-to-model")));
+    }
+
+    /** Una generación que Tripo reporta como fallida no se retoma: no se cobra y se empieza de cero. */
+    @Test
+    void aFailedGenerationIsNotResumed() {
+        uploadOk();
+        createOk();
+        json("GET", TASK_URL, 200, task("failed", null));
+        TripoAdapter adapter = adapter();
+
+        assertThatThrownBy(() -> adapter.generate(JPEG)).isInstanceOf(DomainException.class);
+        assertThat(adapter.hasPendingGeneration(JPEG)).isFalse();
+        assertThatThrownBy(() -> adapter.generate(JPEG)).isInstanceOf(DomainException.class);
+
+        tripo.verify(2, postRequestedFor(urlEqualTo("/v3/generation/image-to-model")));
+    }
+
+    /** La retoma automática del cliente recoge el modelo de la tarea en curso. */
+    @Test
+    void resumeDeliversTheModelOfTheGenerationInProgress() {
+        uploadOk();
+        createOk();
+        json("GET", TASK_URL, 200, task("running", null));
+        TripoAdapter adapter = adapter(Duration.ofSeconds(5), Duration.ofMillis(300), 1024);
+        assertThatThrownBy(() -> adapter.generate(JPEG)).isInstanceOf(ProviderTimeoutException.class);
+
+        taskSucceeds();
+        modelReturns(GLB);
+
+        assertThat(adapter.resume(JPEG).toByteArray()).isEqualTo(GLB);
+        tripo.verify(1, postRequestedFor(urlEqualTo("/v3/generation/image-to-model")));
+        assertThat(adapter.hasPendingGeneration(JPEG)).isFalse();
+    }
+
+    /** Una retoma que sigue sin alcanzar el modelo vuelve a avisar que la generación continúa. */
+    @Test
+    void resumeTimesOutAgainWhileTheTaskKeepsRunning() {
+        uploadOk();
+        createOk();
+        json("GET", TASK_URL, 200, task("running", null));
+        TripoAdapter adapter = adapter(Duration.ofSeconds(5), Duration.ofMillis(200), 1024);
+        assertThatThrownBy(() -> adapter.generate(JPEG)).isInstanceOf(ProviderTimeoutException.class);
+
+        assertThatThrownBy(() -> adapter.resume(JPEG))
+                .isInstanceOfSatisfying(
+                        ProviderTimeoutException.class,
+                        e -> assertThat(e.generationContinues()).isTrue());
+        tripo.verify(1, postRequestedFor(urlEqualTo("/v3/generation/image-to-model")));
+    }
+
+    /**
+     * Tras un reinicio del servicio no queda nada que retomar. La retoma no la confirmó el usuario, así que falla sin
+     * tocar Tripo: ni saldo, ni subida, ni tarea.
+     */
+    @Test
+    void resumeWithNothingPendingFailsWithoutCreatingATask() {
+        uploadOk();
+        createOk();
+        taskSucceeds();
+        modelReturns(GLB);
+
+        assertThatThrownBy(() -> adapter().resume(JPEG))
+                .isInstanceOf(ProviderFailureException.class)
+                .matches(TripoAdapterTest::charged, "la generación anterior pudo cobrarse");
+        assertThat(tripo.getAllServeEvents()).isEmpty();
+    }
+
+    /** Si la generación falla cuando ya nadie espera, la retoma tampoco crea otra: el usuario decide si reintenta. */
+    @Test
+    void aGenerationThatFailedInTheBackgroundIsNotRecreatedByAResume() throws InterruptedException {
+        uploadOk();
+        createOk();
+        json("GET", TASK_URL, 200, task("running", null));
+        TripoAdapter adapter = adapter(Duration.ofSeconds(5), Duration.ofMillis(200), 1024);
+        assertThatThrownBy(() -> adapter.generate(JPEG)).isInstanceOf(ProviderTimeoutException.class);
+
+        json("GET", TASK_URL, 200, task("failed", null));
+        awaitNoPendingGeneration(adapter);
+
+        assertThatThrownBy(() -> adapter.resume(JPEG)).isInstanceOf(ProviderFailureException.class);
+        tripo.verify(1, postRequestedFor(urlEqualTo("/v3/files")));
+        tripo.verify(1, postRequestedFor(urlEqualTo("/v3/generation/image-to-model")));
+    }
+
+    /** La generación en segundo plano tiene su propio plazo: pasado ese tiempo se abandona y deja de retomarse. */
+    @Test
+    void theBackgroundGenerationIsAbandonedAfterItsOwnDeadline() throws InterruptedException {
+        uploadOk();
+        createOk();
+        json("GET", TASK_URL, 200, task("running", null));
+        TripoAdapter adapter = adapterWithTaskDeadline(Duration.ofMillis(200), Duration.ofMillis(700));
+        assertThatThrownBy(() -> adapter.generate(JPEG))
+                .isInstanceOfSatisfying(
+                        ProviderTimeoutException.class,
+                        e -> assertThat(e.generationContinues()).isTrue());
+
+        awaitNoPendingGeneration(adapter);
+
+        assertThatThrownBy(() -> adapter.resume(JPEG)).isInstanceOf(ProviderFailureException.class);
+        tripo.verify(1, postRequestedFor(urlEqualTo("/v3/generation/image-to-model")));
+    }
+
+    /** Quien sigue esperando cuando vence el plazo de fondo recibe un timeout que ya no es retomable. */
+    @Test
+    void aWaiterAtTheBackgroundDeadlineGetsAPlainTimeout() {
+        uploadOk();
+        createOk();
+        json("GET", TASK_URL, 200, task("running", null));
+        TripoAdapter adapter = adapterWithTaskDeadline(Duration.ofSeconds(5), Duration.ofMillis(300));
+
+        assertThatThrownBy(() -> adapter.generate(JPEG))
+                .isInstanceOfSatisfying(ProviderTimeoutException.class, e -> {
+                    assertThat(e.generationContinues()).isFalse();
+                    assertThat(e.providerMayHaveCharged()).isTrue();
+                })
+                .hasMessageContaining(TASK);
+        assertThat(adapter.hasPendingGeneration(JPEG)).isFalse();
+    }
+
+    /** Otra foto es otra generación: no se mezcla con la que sigue en curso. */
+    @Test
+    void aDifferentPhotoIsNotResumed() {
+        uploadOk();
+        createOk();
+        json("GET", TASK_URL, 200, task("running", null));
+        TripoAdapter adapter = adapter(Duration.ofSeconds(5), Duration.ofMillis(200), 1024);
+        assertThatThrownBy(() -> adapter.generate(JPEG)).isInstanceOf(ProviderTimeoutException.class);
+
+        VehicleImage other = new VehicleImage(TestImages.jpeg(800, 600), ImageFormat.JPEG, 800, 600);
+
+        assertThat(adapter.hasPendingGeneration(other)).isFalse();
     }
 
     /**

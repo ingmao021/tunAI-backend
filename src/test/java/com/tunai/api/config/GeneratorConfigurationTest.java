@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.tunai.api.adapter.out.tripo.TripoAdapter;
 import com.tunai.api.adapter.out.tripo.TripoOptions;
 import com.tunai.api.application.port.out.ModelGeneratorPort;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
@@ -62,6 +63,30 @@ class GeneratorConfigurationTest {
 
                     assertThat(options.textureQuality()).isEqualTo(TripoOptions.TextureQuality.STANDARD);
                     assertThat(options.geometryQuality()).isEqualTo(TripoOptions.GeometryQuality.DETAILED);
+                });
+    }
+
+    /**
+     * La espera de cada petición (85 s, por el proxy) y el plazo de la generación (10 min) son cosas distintas: Tripo
+     * tarda más que la primera, y por eso la generación sigue en segundo plano.
+     */
+    @Test
+    void theRequestWaitAndTheBackgroundDeadlineHaveTheirOwnDefaults() {
+        runner.withPropertyValues("tunai.tripo.api-key=" + KEY).run(context -> {
+            TripoProperties properties = context.getBean(TripoProperties.class);
+
+            assertThat(properties.maxWait()).isEqualTo(Duration.ofSeconds(85));
+            assertThat(properties.taskDeadline()).isEqualTo(Duration.ofMinutes(10));
+        });
+    }
+
+    @Test
+    void theBackgroundDeadlineIsConfigurable() {
+        runner.withPropertyValues("tunai.tripo.api-key=" + KEY, "tunai.tripo.task-deadline=4m")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(TripoProperties.class).taskDeadline())
+                            .isEqualTo(Duration.ofMinutes(4));
                 });
     }
 

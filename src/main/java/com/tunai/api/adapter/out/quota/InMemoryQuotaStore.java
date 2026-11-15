@@ -78,6 +78,26 @@ public final class InMemoryQuotaStore implements QuotaStorePort {
     }
 
     @Override
+    public QuotaReservation tryReserveResuming(AccountId accountId, ClientIp clientIp) {
+        Objects.requireNonNull(accountId, "accountId");
+        Objects.requireNonNull(clientIp, "clientIp");
+        synchronized (lock) {
+            Instant now = clock.instant();
+            rollDayIfNeeded(now);
+            if (credits(accountId) < limits.creditsPerModel()) {
+                throw new InsufficientCreditsException(
+                        "Créditos insuficientes: cada modelo usa " + limits.creditsPerModel(),
+                        statusOf(accountId, clientIp, now));
+            }
+            account(accountId).reserve();
+            QuotaReservation reservation =
+                    new QuotaReservation(UUID.randomUUID(), accountId, clientIp, currentDay, false);
+            pending.put(reservation.id(), reservation);
+            return reservation;
+        }
+    }
+
+    @Override
     public QuotaStatus commit(QuotaReservation reservation) {
         Objects.requireNonNull(reservation, "reservation");
         synchronized (lock) {
@@ -85,7 +105,7 @@ public final class InMemoryQuotaStore implements QuotaStorePort {
             rollDayIfNeeded(now);
             if (pending.remove(reservation.id()) != null) {
                 account(reservation.accountId()).commit();
-                if (reservation.day().equals(currentDay)) {
+                if (reservation.countsDaily() && reservation.day().equals(currentDay)) {
                     dailyCounter(ipKey(reservation.clientIp())).commit();
                     dailyCounter(GLOBAL_KEY).commit();
                 }
@@ -101,7 +121,7 @@ public final class InMemoryQuotaStore implements QuotaStorePort {
             rollDayIfNeeded(clock.instant());
             if (pending.remove(reservation.id()) != null) {
                 account(reservation.accountId()).release();
-                if (reservation.day().equals(currentDay)) {
+                if (reservation.countsDaily() && reservation.day().equals(currentDay)) {
                     dailyCounter(ipKey(reservation.clientIp())).release();
                     dailyCounter(GLOBAL_KEY).release();
                 }
@@ -116,7 +136,7 @@ public final class InMemoryQuotaStore implements QuotaStorePort {
             rollDayIfNeeded(clock.instant());
             if (pending.remove(reservation.id()) != null) {
                 account(reservation.accountId()).release();
-                if (reservation.day().equals(currentDay)) {
+                if (reservation.countsDaily() && reservation.day().equals(currentDay)) {
                     dailyCounter(ipKey(reservation.clientIp())).commit();
                     dailyCounter(GLOBAL_KEY).commit();
                 }

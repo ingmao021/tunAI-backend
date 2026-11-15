@@ -148,6 +148,45 @@ class ApiExceptionHandlerTest {
                 .hasValue("Retry-After", 5400);
     }
 
+    /**
+     * La generación sigue en el servidor: el cliente lo sabe por {@code resumable} y puede retomarla solo. Sin ese
+     * campo, un cliente que reintentara por su cuenta crearía otra tarea cobrada.
+     */
+    @Test
+    void aTimeoutWhoseGenerationContinuesIsResumable() throws Exception {
+        MvcTestResult result = call(
+                () -> new ProviderTimeoutException("Tripo no terminó en PT1M25S (tarea task_1)", null, true, true));
+
+        assertThat(result)
+                .hasStatus(504)
+                .hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
+                .headers()
+                .hasValue("Retry-After", ApiExceptionHandler.RESUME_RETRY_AFTER.toSeconds());
+        assertThat(result)
+                .bodyJson()
+                .hasPathSatisfying("$.code", v -> assertThat(v).asString().isEqualTo("PROVIDER_TIMEOUT"))
+                .hasPathSatisfying("$.resumable", v -> assertThat(v).isEqualTo(true))
+                .hasPathSatisfying(
+                        "$.detail",
+                        v -> assertThat(v).asString().isEqualTo(ApiExceptionHandler.RESUMABLE_TIMEOUT_DETAIL));
+        assertThat(result.getResponse().getContentAsString()).doesNotContain("task_1", "Tripo");
+    }
+
+    /** Un timeout sin generación en curso (la tarea se abandonó) no se puede retomar: el cliente no debe insistir. */
+    @Test
+    void aTimeoutWithoutAGenerationInProgressIsNotResumable() {
+        MvcTestResult result = call(() -> new ProviderTimeoutException("la tarea no terminó a tiempo", null, true));
+
+        assertThat(result).hasStatus(504).headers().doesNotContainHeader("Retry-After");
+        assertThat(result).bodyJson().doesNotHavePath("$.resumable");
+    }
+
+    /** Pausa corta: la petición que retoma ya espera hasta el plazo del servidor. */
+    @Test
+    void theResumePauseIsShort() {
+        assertThat(ApiExceptionHandler.RESUME_RETRY_AFTER).isLessThanOrEqualTo(Duration.ofSeconds(5));
+    }
+
     @Test
     void hidesInternalDetailsOfProviderAndBudgetErrors() throws Exception {
         MvcTestResult provider = call(() -> new ProviderFailureException("Tripo devolvió 500 con body secreto"));

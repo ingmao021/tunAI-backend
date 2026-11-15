@@ -164,6 +164,99 @@ class GenerateModelServiceTest {
         assertThat(events).filteredOn("generate"::equals).hasSize(1);
     }
 
+    /** Generador con una generación ya empezada para la foto: retomarla es lo único que no cuesta otro modelo. */
+    private ModelGeneratorPort pending() {
+        return new ModelGeneratorPort() {
+            @Override
+            public GeneratedModel generate(VehicleImage image) {
+                events.add("generate");
+                return GeneratedModel.fromGlb(GLB);
+            }
+
+            @Override
+            public GeneratedModel resume(VehicleImage image) {
+                events.add("resume");
+                return GeneratedModel.fromGlb(GLB);
+            }
+
+            @Override
+            public boolean hasPendingGeneration(VehicleImage image) {
+                return true;
+            }
+        };
+    }
+
+    /**
+     * Un reintento de una foto cuya generación sigue en el proveedor la retoma: no cuenta otro uso diario ni pide otro
+     * modelo. Vale también para el {@code Reintentar} de un cliente antiguo, que no marca la petición.
+     */
+    @Test
+    void resumingAPendingGenerationReservesWithoutCountingTheDailyUsageAgain() {
+        service(pending(), 1024).generate(COMMAND);
+
+        assertThat(events).containsExactly("acquire", "reserveResuming", "resume", "commit", "close");
+    }
+
+    @Test
+    void aFreshPhotoReservesNormally() {
+        service(succeeding(), 1024).generate(COMMAND);
+
+        assertThat(events).doesNotContain("reserveResuming", "resume");
+    }
+
+    /**
+     * La retoma automática no la confirmó el usuario: si ya no hay nada que retomar (el servicio se reinició), no se
+     * reserva cuota ni se llama al proveedor. Crear otra tarea gastaría créditos reales sin que nadie lo pidiera.
+     */
+    @Test
+    void aResumeOnlyRequestWithNothingPendingNeverStartsAGeneration() {
+        GenerateCommand resumeOnly =
+                new GenerateCommand(COMMAND.accountId(), COMMAND.clientIp(), COMMAND.image(), true);
+
+        assertThatThrownBy(() -> service(succeeding(), 1024).generate(resumeOnly))
+                .isInstanceOfSatisfying(
+                        ProviderFailureException.class,
+                        e -> assertThat(e.providerMayHaveCharged()).isTrue());
+        assertThat(events).containsExactly("acquire", "close");
+    }
+
+    @Test
+    void aResumeOnlyRequestJoinsThePendingGeneration() {
+        GenerateCommand resumeOnly =
+                new GenerateCommand(COMMAND.accountId(), COMMAND.clientIp(), COMMAND.image(), true);
+
+        GenerationResult result = service(pending(), 1024).generate(resumeOnly);
+
+        assertThat(result.model().toByteArray()).isEqualTo(GLB);
+        assertThat(events).containsExactly("acquire", "reserveResuming", "resume", "commit", "close");
+    }
+
+    /** Si la generación desaparece entre la comprobación y la retoma, se devuelven los créditos y no se crea otra. */
+    @Test
+    void aGenerationLostWhileResumingReleasesTheCredits() {
+        ModelGeneratorPort vanished = new ModelGeneratorPort() {
+            @Override
+            public GeneratedModel generate(VehicleImage image) {
+                events.add("generate");
+                return GeneratedModel.fromGlb(GLB);
+            }
+
+            @Override
+            public boolean hasPendingGeneration(VehicleImage image) {
+                return true;
+            }
+        };
+
+        assertThatThrownBy(() -> service(vanished, 1024).generate(COMMAND))
+                .isInstanceOf(ProviderFailureException.class);
+        assertThat(events).containsExactly("acquire", "reserveResuming", "releaseKeepingDailyUsage", "close");
+    }
+
+    @Test
+    void aCommandIsNotResumeOnlyUnlessAsked() {
+        assertThat(COMMAND.resumeOnly()).isFalse();
+    }
+
     @Test
     void rejectsANonPositiveMaximum() {
         assertThatThrownBy(() -> service(succeeding(), 0)).isInstanceOf(IllegalArgumentException.class);
@@ -181,6 +274,12 @@ class GenerateModelServiceTest {
                         "agotada", new QuotaStatus(2, 0, Instant.EPOCH, 45, 15), Duration.ofHours(1));
             }
             return new QuotaReservation(UUID.randomUUID(), accountId, clientIp, LocalDate.of(2026, 10, 9));
+        }
+
+        @Override
+        public QuotaReservation tryReserveResuming(AccountId accountId, ClientIp clientIp) {
+            events.add("reserveResuming");
+            return new QuotaReservation(UUID.randomUUID(), accountId, clientIp, LocalDate.of(2026, 10, 9), false);
         }
 
         @Override

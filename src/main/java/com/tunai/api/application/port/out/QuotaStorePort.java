@@ -21,6 +21,15 @@ public interface QuotaStorePort {
      */
     QuotaReservation tryReserve(AccountId accountId, ClientIp clientIp);
 
+    /**
+     * Reserva para retomar una generación que el proveedor ya empezó en un intento anterior (que agotó el tiempo): solo
+     * exige y reserva los créditos de la cuenta, porque el uso diario de IP y global ya se contó entonces. La
+     * confirmación o liberación de esta reserva tampoco toca los contadores diarios.
+     *
+     * @throws com.tunai.api.domain.exception.InsufficientCreditsException si la cuenta no tiene créditos
+     */
+    QuotaReservation tryReserveResuming(AccountId accountId, ClientIp clientIp);
+
     /** Convierte la reserva en una generación exitosa y devuelve el estado resultante. */
     QuotaStatus commit(QuotaReservation reservation);
 

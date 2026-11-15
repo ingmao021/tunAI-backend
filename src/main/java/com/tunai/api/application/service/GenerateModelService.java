@@ -16,6 +16,9 @@ import java.util.Objects;
  * fallo la reserva se libera (RN-03) y nunca se reintenta la llamada al proveedor (RN-13). Si el proveedor pudo haber
  * cobrado ({@link DomainException#providerMayHaveCharged()}), al usuario se le devuelven sus créditos pero el uso
  * diario de IP y global se mantiene, para que esos límites sigan acotando el gasto real.
+ *
+ * <p>Una foto con una generación ya empezada (un intento anterior agotó la espera) se retoma en vez de crear otra: solo
+ * se reservan los créditos de la cuenta. Una petición marcada {@code resumeOnly} únicamente puede retomar.
  */
 public class GenerateModelService implements GenerateModelUseCase {
 
@@ -42,10 +45,23 @@ public class GenerateModelService implements GenerateModelUseCase {
     public GenerationResult generate(GenerateCommand command) {
         Objects.requireNonNull(command, "command");
         try (var permit = concurrency.acquire()) {
-            QuotaReservation reservation = quota.tryReserve(command.accountId(), command.clientIp());
+            // Si la foto ya tiene una generación empezada (intento anterior sin tiempo), se retoma sin otro modelo
+            boolean resuming = generator.hasPendingGeneration(command.image());
+            if (command.resumeOnly() && !resuming) {
+                // La retoma automática no la confirmó el usuario: sin nada que retomar, jamás se crea otra tarea
+                throw new ProviderFailureException(
+                        "No hay una generación en curso que retomar (¿se reinició el servicio?): la anterior pudo"
+                                + " cobrarse y no se crea otra sin confirmación",
+                        null,
+                        true);
+            }
+            QuotaReservation reservation = resuming
+                    ? quota.tryReserveResuming(command.accountId(), command.clientIp())
+                    : quota.tryReserve(command.accountId(), command.clientIp());
             boolean settled = false;
             try {
-                GeneratedModel model = generator.generate(command.image());
+                GeneratedModel model =
+                        resuming ? generator.resume(command.image()) : generator.generate(command.image());
                 checkSize(model);
                 QuotaStatus status = quota.commit(reservation);
                 settled = true;

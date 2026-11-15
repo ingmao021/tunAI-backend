@@ -23,7 +23,8 @@ public class GeneratorConfiguration {
         }
         log.warn(
                 "Generador TRIPO: cada generación exitosa gasta créditos reales. Endpoint {}, modelo {}, {} caras,"
-                        + " textura {}, geometría {}, PBR {}, saldo mínimo {}, consulta cada {}, plazo total {}",
+                        + " textura {}, geometría {}, PBR {}, saldo mínimo {}, consulta cada {},"
+                        + " espera por petición {}, plazo total {}",
                 tripo.baseUrl(),
                 tripo.model(),
                 tripo.faceLimit(),
@@ -32,7 +33,8 @@ public class GeneratorConfiguration {
                 tripo.pbr(),
                 tripo.minBalance(),
                 tripo.pollInterval(),
-                tripo.maxWait());
+                tripo.maxWait(),
+                tripo.taskDeadline());
         return TripoAdapter.create(
                 tripo.baseUrl(),
                 tripo.apiKey(),
@@ -42,6 +44,7 @@ public class GeneratorConfiguration {
                 tripo.minBalance(),
                 tripo.pollInterval(),
                 tripo.maxWait(),
+                tripo.taskDeadline(),
                 generation.maxModelBytes().toBytes());
     }
 }

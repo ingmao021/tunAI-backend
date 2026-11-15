@@ -2,6 +2,8 @@ package com.tunai.api.adapter.in.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.tunai.api.TestImages;
@@ -88,6 +90,45 @@ class GenerationApiTest {
     @Test
     void acceptsPng() {
         assertThat(generate(ACCOUNT, TestImages.png(512, 512))).hasStatusOk();
+    }
+
+    /** Con el header de retoma y nada que retomar no se empieza otra generación: costaría créditos sin confirmación. */
+    @Test
+    void theResumeHeaderNeverStartsAGeneration() {
+        MvcTestResult result = resume(TestImages.jpeg(800, 600));
+
+        assertError(result, 502, "PROVIDER_ERROR");
+        verify(generator, never()).generate(any());
+        verify(generator, never()).resume(any());
+    }
+
+    @Test
+    void theResumeHeaderJoinsThePendingGeneration() {
+        when(generator.hasPendingGeneration(any())).thenReturn(true);
+        when(generator.resume(any()))
+                .thenReturn(GeneratedModel.fromGlb("glTF-resumed".getBytes(StandardCharsets.US_ASCII)));
+
+        MvcTestResult result = resume(TestImages.jpeg(800, 600));
+
+        assertThat(result).hasStatusOk().hasContentType("model/gltf-binary");
+        assertThat(result.getResponse().getContentAsByteArray())
+                .isEqualTo("glTF-resumed".getBytes(StandardCharsets.US_ASCII));
+        verify(generator, never()).generate(any());
+    }
+
+    /** Solo {@code true} marca una retoma: cualquier otro valor es una generación normal, confirmada por el usuario. */
+    @Test
+    void anotherValueOfTheResumeHeaderIsANormalGeneration() {
+        MvcTestResult result = mvc.post()
+                .uri(URI)
+                .header("Authorization", bearer(ACCOUNT))
+                .header(GenerationController.RESUME_HEADER, "false")
+                .multipart()
+                .file("image", TestImages.jpeg(800, 600))
+                .exchange();
+
+        assertThat(result).hasStatusOk();
+        verify(generator).generate(any());
     }
 
     @Test
@@ -183,6 +224,17 @@ class GenerationApiTest {
             request.header("Authorization", authorization);
         }
         return request.multipart().file("image", image).exchange();
+    }
+
+    /** Como la retoma automática del cliente tras un 504 {@code resumable}. */
+    private MvcTestResult resume(byte[] image) {
+        return mvc.post()
+                .uri(URI)
+                .header("Authorization", bearer(ACCOUNT))
+                .header(GenerationController.RESUME_HEADER, "true")
+                .multipart()
+                .file("image", image)
+                .exchange();
     }
 
     private String bearer(String account) {

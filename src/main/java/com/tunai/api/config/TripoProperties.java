@@ -21,8 +21,11 @@ import org.springframework.validation.annotation.Validated;
  * @param minBalance créditos de Tripo disponibles que exige cada generación antes de empezar; debe ser al menos lo que
  *     cuesta un modelo con estos parámetros (40)
  * @param pollInterval cada cuánto se consulta la tarea (Tripo recomienda 1–2 s)
- * @param maxWait plazo de toda la generación (saldo, subida, tarea y descarga); debe quedar por debajo de los ~100 s
- *     del proxy de Render y de los 120 s del cliente
+ * @param maxWait lo que espera cada petición antes de responder {@code 504} retomable; debe quedar por debajo de los
+ *     ~100 s del proxy de Render y de los 120 s del cliente. Tripo suele tardar más (2–4 min con textura detallada):
+ *     la generación sigue en segundo plano y el cliente la retoma
+ * @param taskDeadline plazo de toda la generación (saldo, subida, tarea y descarga) en segundo plano; pasado este
+ *     tiempo se abandona la tarea
  */
 @Validated
 @ConfigurationProperties("tunai.tripo")
@@ -44,7 +47,8 @@ public record TripoProperties(
         @NotNull @DefaultValue("10s") Duration connectTimeout,
         @NotNull @DefaultValue("30s") Duration readTimeout,
         @NotNull @DefaultValue("2s") Duration pollInterval,
-        @NotNull @DefaultValue("85s") Duration maxWait) {
+        @NotNull @DefaultValue("85s") Duration maxWait,
+        @NotNull @DefaultValue("10m") Duration taskDeadline) {
 
     public boolean hasApiKey() {
         return apiKey != null && !apiKey.isBlank();
@@ -61,6 +65,6 @@ public record TripoProperties(
                 + model + ", faceLimit=" + faceLimit + ", textureQuality=" + textureQuality
                 + ", geometryQuality=" + geometryQuality + ", pbr=" + pbr + ", minBalance=" + minBalance
                 + ", connectTimeout=" + connectTimeout + ", readTimeout=" + readTimeout + ", pollInterval="
-                + pollInterval + ", maxWait=" + maxWait + "]";
+                + pollInterval + ", maxWait=" + maxWait + ", taskDeadline=" + taskDeadline + "]";
     }
 }

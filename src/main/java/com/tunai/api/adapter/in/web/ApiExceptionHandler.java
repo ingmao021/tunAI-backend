@@ -69,12 +69,28 @@ public class ApiExceptionHandler {
             ProviderUnavailableException.class, "El servicio no está disponible en este momento.",
             ProviderTimeoutException.class, "El servicio de IA tardó demasiado. No se descontaron tus créditos.");
 
+    static final String RESUMABLE_TIMEOUT_DETAIL = "Tu modelo sigue generándose. Espera unos segundos y vuelve a"
+            + " intentarlo con la misma foto: se recogerá el resultado sin gastar otro modelo.";
+
+    /** Corto a propósito: la petición que retoma ya es una espera larga, así que una pausa solo retrasa la entrega. */
+    static final Duration RESUME_RETRY_AFTER = Duration.ofSeconds(3);
+
     @ExceptionHandler(DomainException.class)
     ResponseEntity<ProblemDetail> handleDomain(DomainException e) {
         ErrorCode code = DOMAIN_CODES.getOrDefault(e.getClass(), ErrorCode.INTERNAL_ERROR);
         String detail = PUBLIC_DETAILS.getOrDefault(e.getClass(), e.getMessage());
+        Optional<Duration> retryAfter = e.retryAfter();
+        if (e instanceof ProviderTimeoutException timeout && timeout.generationContinues()) {
+            // No es un fallo: el modelo sigue generándose y reintentar con la misma foto lo recoge sin otro cobro
+            detail = RESUMABLE_TIMEOUT_DETAIL;
+            retryAfter = Optional.of(RESUME_RETRY_AFTER);
+        }
         logDomain(code, e);
-        ResponseEntity<ProblemDetail> response = problem(code, detail, e.retryAfter());
+        ResponseEntity<ProblemDetail> response = problem(code, detail, retryAfter);
+        if (e instanceof ProviderTimeoutException timeout && timeout.generationContinues()) {
+            // El cliente solo reintenta solo si el servidor lo declara: un servidor sin esto crearía otra tarea cobrada
+            response.getBody().setProperty("resumable", true);
+        }
         QuotaStatus status = e instanceof QuotaExceededException quotaExceeded
                 ? quotaExceeded.status()
                 : e instanceof InsufficientCreditsException noCredits ? noCredits.status() : null;

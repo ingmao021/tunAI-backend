@@ -48,6 +48,53 @@ class MeteredModelGeneratorTest {
                 .isEqualTo(1);
     }
 
+    /** Generador con una generación pendiente: {@code generate} no debe usarse para retomarla. */
+    private static ModelGeneratorPort pending() {
+        return new ModelGeneratorPort() {
+            @Override
+            public GeneratedModel generate(VehicleImage image) {
+                throw new AssertionError("una retoma no debe empezar otra generación");
+            }
+
+            @Override
+            public GeneratedModel resume(VehicleImage image) {
+                return GeneratedModel.fromGlb(GLB);
+            }
+
+            @Override
+            public boolean hasPendingGeneration(VehicleImage image) {
+                return true;
+            }
+        };
+    }
+
+    @Test
+    void aResumeIsDelegatedAndMeasuredLikeAGeneration() {
+        GeneratedModel model = new MeteredModelGenerator(pending(), registry, "tripo").resume(IMAGE);
+
+        assertThat(model.toByteArray()).isEqualTo(GLB);
+        assertThat(generations("success")).isEqualTo(1);
+    }
+
+    @Test
+    void aFailedResumeIsClassified() {
+        ModelGeneratorPort nothingPending = image -> GeneratedModel.fromGlb(GLB);
+
+        assertThatThrownBy(() -> new MeteredModelGenerator(nothingPending, registry, "tripo").resume(IMAGE))
+                .isInstanceOf(ProviderFailureException.class);
+        assertThat(generations("error")).isEqualTo(1);
+    }
+
+    @Test
+    void delegatesThePendingCheck() {
+        ModelGeneratorPort nothingPending = image -> GeneratedModel.fromGlb(GLB);
+
+        assertThat(new MeteredModelGenerator(pending(), registry, "tripo").hasPendingGeneration(IMAGE))
+                .isTrue();
+        assertThat(new MeteredModelGenerator(nothingPending, registry, "tripo").hasPendingGeneration(IMAGE))
+                .isFalse();
+    }
+
     static Stream<Arguments> failures() {
         return Stream.of(
                 Arguments.of((Supplier<RuntimeException>) () -> new ProviderRejectedException("x"), "rejected"),

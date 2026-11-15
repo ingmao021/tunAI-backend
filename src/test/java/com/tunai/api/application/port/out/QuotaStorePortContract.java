@@ -212,6 +212,48 @@ public abstract class QuotaStorePortContract {
         assertThat(status.remaining()).isEqualTo(1);
     }
 
+    /** Retomar una generación ya contada: solo cuesta créditos, aunque la IP y el global estén agotados. */
+    @Test
+    void resumingSpendsCreditsButNotTheDailyLimitsAlreadyCounted() {
+        QuotaStorePort store = store(2, 1, 1);
+        AccountId installation = newInstallation();
+        QuotaReservation first = store.tryReserve(installation, ip("14.0.0.1"));
+        store.releaseKeepingDailyUsage(first);
+        assertThatThrownBy(() -> store.tryReserve(installation, ip("14.0.0.1")))
+                .isInstanceOf(QuotaExceededException.class);
+
+        QuotaReservation resumed = store.tryReserveResuming(installation, ip("14.0.0.1"));
+        QuotaStatus status = store.commit(resumed);
+
+        assertThat(status.credits()).isEqualTo(15);
+        // El uso diario sigue en 1: ni se contó dos veces ni se devolvió
+        assertThatThrownBy(() -> store.tryReserve(newInstallation(), ip("14.0.0.2")))
+                .isInstanceOf(GlobalLimitReachedException.class);
+    }
+
+    @Test
+    void releasingAResumedReservationGivesTheCreditsBackAndLeavesTheDailyLimitsAlone() {
+        QuotaStorePort store = store(2, 1, 1);
+        AccountId installation = newInstallation();
+        store.releaseKeepingDailyUsage(store.tryReserve(installation, ip("15.0.0.1")));
+
+        store.release(store.tryReserveResuming(installation, ip("15.0.0.1")));
+
+        assertThat(store.status(installation, ip("15.0.0.1")).credits()).isEqualTo(30);
+        assertThatThrownBy(() -> store.tryReserve(installation, ip("15.0.0.1")))
+                .isInstanceOf(QuotaExceededException.class);
+    }
+
+    @Test
+    void resumingStillRequiresCredits() {
+        QuotaStorePort store = store(1, 5, 5);
+        AccountId installation = newInstallation();
+        store.commit(store.tryReserve(installation, ip("16.0.0.1")));
+
+        assertThatThrownBy(() -> store.tryReserveResuming(installation, ip("16.0.0.1")))
+                .isInstanceOf(InsufficientCreditsException.class);
+    }
+
     @Test
     void aChargedReservationFromYesterdayDoesNotSpendTodaysLimits() {
         QuotaStorePort store = store(2, 1, 1);

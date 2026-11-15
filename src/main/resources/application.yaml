@@ -40,8 +40,11 @@ tunai:
     connect-timeout: ${TUNAI_TRIPO_CONNECT_TIMEOUT:10s}
     read-timeout: ${TUNAI_TRIPO_READ_TIMEOUT:30s}
     poll-interval: ${TUNAI_TRIPO_POLL_INTERVAL:2s}
-    # Plazo de toda la generación, del saldo a la descarga: debe caber en los ~100 s del proxy de Render
+    # Lo que espera cada petición antes de responder 504 "resumable": debe caber en los ~100 s del proxy de Render.
+    # No es el plazo de Tripo: la generación sigue en segundo plano y el cliente la retoma con la misma foto
     max-wait: ${TUNAI_TRIPO_MAX_WAIT:85s}
+    # Plazo de toda la generación en segundo plano, del saldo a la descarga (Tripo tarda 2-4 min con textura detallada)
+    task-deadline: ${TUNAI_TRIPO_TASK_DEADLINE:10m}
   generation:
     max-model-bytes: ${TUNAI_MAX_MODEL_BYTES:50MB}
     max-concurrent: ${TUNAI_MAX_CONCURRENT:2}

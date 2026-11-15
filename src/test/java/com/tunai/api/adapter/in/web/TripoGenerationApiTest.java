@@ -13,6 +13,7 @@ import com.tunai.api.TestImages;
 import com.tunai.api.adapter.out.auth.HmacSessionIssuer;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
@@ -35,6 +36,7 @@ import org.springframework.test.web.servlet.assertj.MvcTestResult;
             "tunai.tripo.read-timeout=5s",
             "tunai.tripo.poll-interval=20ms",
             "tunai.tripo.max-wait=5s",
+            "tunai.tripo.task-deadline=30s",
             "tunai.quota.initial-credits=15",
             "tunai.quota.per-ip=1000",
             "tunai.quota.global-daily=1000"
@@ -63,7 +65,16 @@ class TripoGenerationApiTest {
     @Autowired
     HmacSessionIssuer issuer;
 
+    /** Para que cada prueba use una foto distinta. */
+    private static final AtomicInteger PHOTOS = new AtomicInteger();
+
     private final String installation = UUID.randomUUID().toString();
+
+    /**
+     * Una foto distinta por prueba: tras un timeout la generación sigue en segundo plano dentro del mismo contexto de
+     * Spring, y otra prueba con la misma foto se uniría a ella en vez de empezar la suya.
+     */
+    private final byte[] photo = TestImages.jpeg(640 + PHOTOS.incrementAndGet(), 512);
 
     @BeforeEach
     void reset() {
@@ -136,6 +147,71 @@ class TripoGenerationApiTest {
         assertThat(remaining()).isEqualTo(1);
     }
 
+    /**
+     * El fallo que gastó créditos sin entregar nada: Tripo tarda más que la espera de la petición. Ahora el 504 avisa
+     * que la generación sigue, y la retoma del cliente recoge el modelo de <b>la misma</b> tarea.
+     */
+    @Test
+    void aTimeoutIsResumableAndTheResumeDeliversTheModelOfTheSameTask() {
+        byte[] glb = "glTF-resumed-model".getBytes(StandardCharsets.US_ASCII);
+        uploadAndCreateOk();
+        taskIs("running", "");
+
+        MvcTestResult timedOut = generate();
+
+        assertError(timedOut, 504, "PROVIDER_TIMEOUT");
+        assertThat(timedOut)
+                .bodyJson()
+                .hasPathSatisfying("$.resumable", v -> assertThat(v).isEqualTo(true));
+        assertThat(timedOut).headers().containsHeader("Retry-After");
+
+        taskIs("success", ",\"output\":{\"model_url\":\"" + tripo.baseUrl() + MODEL_PATH + "\"}");
+        tripo.stubFor(get(urlEqualTo(MODEL_PATH))
+                .willReturn(aResponse().withStatus(200).withBody(glb)));
+
+        MvcTestResult resumed = resume();
+
+        assertThat(resumed).hasStatusOk().hasContentType("model/gltf-binary");
+        assertThat(resumed.getResponse().getContentAsByteArray()).isEqualTo(glb);
+        assertThat(remaining()).isZero();
+        tripo.verify(1, postRequestedFor(urlEqualTo(FILES_URL)));
+        tripo.verify(1, postRequestedFor(urlEqualTo(CREATE_URL)));
+    }
+
+    /** El {@code Reintentar} de la app 1.0.1 no envía el header: también se une a la tarea en vez de crear otra. */
+    @Test
+    void aManualRetryWithTheSamePhotoJoinsTheRunningTask() {
+        byte[] glb = "glTF-retried-model".getBytes(StandardCharsets.US_ASCII);
+        uploadAndCreateOk();
+        taskIs("running", "");
+        assertError(generate(), 504, "PROVIDER_TIMEOUT");
+
+        taskIs("success", ",\"output\":{\"model_url\":\"" + tripo.baseUrl() + MODEL_PATH + "\"}");
+        tripo.stubFor(get(urlEqualTo(MODEL_PATH))
+                .willReturn(aResponse().withStatus(200).withBody(glb)));
+
+        MvcTestResult retried = generate();
+
+        assertThat(retried).hasStatusOk();
+        assertThat(retried.getResponse().getContentAsByteArray()).isEqualTo(glb);
+        tripo.verify(1, postRequestedFor(urlEqualTo(CREATE_URL)));
+    }
+
+    /**
+     * Sin nada que retomar (el servicio se reinició y perdió la generación), la retoma automática no crea otra tarea:
+     * no toca Tripo y no gasta la cuota del usuario.
+     */
+    @Test
+    void aResumeWithNothingPendingAnswers502AndNeverTouchesTheProvider() {
+        uploadAndCreateOk();
+        taskIs("success", ",\"output\":{\"model_url\":\"" + tripo.baseUrl() + MODEL_PATH + "\"}");
+
+        assertError(resume(), 502, "PROVIDER_ERROR");
+
+        assertThat(tripo.getAllServeEvents()).isEmpty();
+        assertThat(remaining()).isEqualTo(1);
+    }
+
     private static String ok(String data) {
         return "{\"code\":0,\"data\":" + data + "}";
     }
@@ -166,7 +242,18 @@ class TripoGenerationApiTest {
                 .uri("/api/v1/generations")
                 .header("Authorization", "Bearer " + issuer.issue(installation).token())
                 .multipart()
-                .file("image", TestImages.jpeg(640, 512))
+                .file("image", photo)
+                .exchange();
+    }
+
+    /** La misma foto, marcada como retoma automática del cliente. */
+    private MvcTestResult resume() {
+        return mvc.post()
+                .uri("/api/v1/generations")
+                .header("Authorization", "Bearer " + issuer.issue(installation).token())
+                .header(GenerationController.RESUME_HEADER, "true")
+                .multipart()
+                .file("image", photo)
                 .exchange();
     }
 

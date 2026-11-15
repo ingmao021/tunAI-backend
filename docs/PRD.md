@@ -4,8 +4,8 @@
 |---|---|
 | Producto | TunAI — visualización y personalización virtual de vehículos en 3D |
 | Componente | API intermediaria de generación 3D (repositorio **backend**) |
-| Versión del documento | 1.12 |
-| Fecha | 2026-10-15 (v1.0: 2026-10-03) |
+| Versión del documento | 1.13 |
+| Fecha | 2026-11-15 (v1.0: 2026-10-03) |
 | Autor | Anderson |
 | Estado | Aprobado para MVP (con puntos **PENDIENTE DE DEFINIR / VALIDAR**) |
 | Documento relacionado | `PRD-TunAI-Frontend.md` (aplicación de escritorio JavaFX) |
@@ -34,6 +34,7 @@
 | 1.10 | 2026-10-14 | **Tripo es el único proveedor**: se eliminan los adaptadores `stability` y `fake`, `GenerationOptions` y `tunai.generator.*`; la app no arranca sin `TRIPO_API_KEY` (RNF-BE-015). Parámetros elegidos tras una prueba en Tripo Studio: textura `detailed` (4K) + PBR, geometría `standard`, 200.000 caras = 40 créditos por modelo (§2.1.1, §13.9). Nueva variable `TUNAI_TRIPO_GEOMETRY_QUALITY`; `max-model-bytes` sube a 50 MB. Los tests usan WireMock o un generador simulado (RN-15) |
 | 1.11 | 2026-10-15 | Protección del saldo de Tripo tras la revisión de huecos: consulta del saldo antes de cada generación (RF-BE-020, `TUNAI_TRIPO_MIN_BALANCE`); los fallos posteriores a crear la tarea mantienen el uso diario de IP y global (`releaseKeepingDailyUsage`, §13.5); reintentos de la consulta de la tarea y de la descarga; plazo duro de `max-wait` para toda la generación (§13.9); el GLB ya no se copia en memoria (RNF-BE-003) |
 | 1.12 | 2026-10-15 | Revisión de deuda técnica: el límite por IP agrupa IPv6 por su prefijo `/64` canónico (RN-10); limitación aceptada de la desconexión del cliente (§13.9); sin Lombok; la foto ya no se copia en `VehicleImage`; JaCoCo exige 90 % de líneas en dominio y aplicación y 85 % en adaptadores (Anexo D) |
+| 1.13 | 2026-11-15 | **Timeout retomable**, tras el incidente del 9-nov-2026: Tripo tardó 2–4 min, `max-wait` era el plazo de toda la generación (85 s) y cada `Reintentar` creó otra tarea (3 tareas, 120 créditos, 0 modelos entregados). Ahora la generación sigue en segundo plano y la misma foto la retoma en vez de crear otra tarea (§13.9, RF-BE-025); `504` con `resumable` y header `X-Generation-Resume` (§15.4); variable `TUNAI_TRIPO_TASK_DEADLINE` (Anexo A); RN-13, R-BE-14, P-BE-10 y Anexo E actualizados |
 
 **Convenciones:** igual que el PRD del frontend.
 - Prioridad MoSCoW (Must, Should, Could, Won't).
@@ -219,7 +220,7 @@ Sin backend, la clave de Stability tendría que ir dentro de la app y cualquiera
   - **A5 — Límite global diario agotado** → `503 SERVICE_UNAVAILABLE` (sin revelar detalles del presupuesto).
   - **A6 — El proveedor rechaza la imagen** (4xx del proveedor, por ejemplo, moderación) → **liberar** la reserva → `422 PROVIDER_REJECTED`.
   - **A7 — Error 5xx del proveedor o respuesta no-GLB** → **liberar** → `502 PROVIDER_ERROR`.
-  - **A8 — Tiempo agotado con el proveedor** → **liberar** → `504 PROVIDER_TIMEOUT`.
+  - **A8 — Tiempo agotado con el proveedor** → **liberar** → `504 PROVIDER_TIMEOUT`. Si la generación sigue en segundo plano, el `504` lleva `"resumable": true` y `Retry-After`: repetir la petición con la misma foto la retoma sin crear otra tarea (§13.9).
   - **A9 — Error de autenticación con el proveedor** (clave inválida o sin créditos) → **liberar** → `503 SERVICE_UNAVAILABLE` y log de nivel ERROR para el operador.
 - **Reglas de negocio:** RN-02, RN-03, RN-04, RN-10, RN-11, RN-12, RN-13.
 - **Datos:** imagen (bytes), ID de instalación, IP del cliente (RF-BE-022), versión del cliente.
@@ -284,7 +285,8 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RF-BE-021 | ~~Adaptador `fake` de `ModelGeneratorPort`~~ **Retirado en v1.10**: Tripo es el único proveedor. Las pruebas automáticas usan WireMock (`TripoAdapterTest`, `TripoGenerationApiTest`) o un `ModelGeneratorPort` simulado | — |
 | RF-BE-022 | Obtener la IP real del cliente, en este orden: (1) el header de confianza del proxy de borde (`CF-Connecting-IP`: Render va detrás de Cloudflare, que lo sobrescribe); (2) el valor de `X-Forwarded-For` que agregó el primero de N proxies de confianza contando desde la derecha (N configurable, por defecto 1), **nunca** el primero de la lista, que lo controla el cliente; (3) la IP de la conexión | Must |
 | RF-BE-023 | Generar un `traceId` por petición (filtro web, guardado en el MDC de los logs), devolverlo en el header `X-Trace-Id` y en el campo `traceId` de los errores | Must |
-| RF-BE-024 | Proveer un adaptador `tripo` de `ModelGeneratorPort` sobre Tripo API v3 (§13.9): sube la foto, crea la tarea, la consulta hasta un estado final o hasta `max-wait`, y descarga el GLB sin enviar la clave al CDN. Se elige con `tunai.generator.provider=tripo` y exige `TRIPO_API_KEY` al arrancar | Must |
+| RF-BE-024 | Proveer un adaptador `tripo` de `ModelGeneratorPort` sobre Tripo API v3 (§13.9): sube la foto, crea la tarea, la consulta hasta un estado final o hasta `task-deadline`, y descarga el GLB sin enviar la clave al CDN. Se elige con `tunai.generator.provider=tripo` y exige `TRIPO_API_KEY` al arrancar | Must |
+| RF-BE-025 | **Timeout retomable** (§13.9): la generación corre en segundo plano y no se cancela cuando la petición agota `max-wait`; se responde `504` con `"resumable": true`. Otra petición con la misma foto se une a esa generación o recoge su modelo, sin crear otra tarea ni contar otro uso diario. Con el header `X-Generation-Resume: true` la petición **solo** puede retomar: sin generación en curso responde `502` y no crea nada | Must |
 
 ---
 
@@ -321,7 +323,7 @@ Ocurren en el cliente (ver PRD frontend §8); el backend no participa.
 | RN-10 | Máximo **2 generaciones exitosas por día por IP**, para acotar IDs de instalación inventados. IPv4 cuenta por dirección; IPv6, por su prefijo `/64` en forma canónica (un cliente suele recibir todo un `/64` y podría rotar direcciones); una IPv4 mapeada en IPv6 cuenta como la IPv4 |
 | RN-11 | Máximo **2 generaciones exitosas por día en total**, igual al saldo de créditos gratuitos (2 generaciones) |
 | RN-12 | No se almacenan imágenes ni modelos en el servidor |
-| RN-13 | Nunca se reintenta automáticamente una llamada al proveedor (cada éxito tiene costo) |
+| RN-13 | Nunca se reintenta automáticamente una llamada al proveedor (cada éxito tiene costo). Una tarea solo se crea por una petición que el usuario confirmó: retomar una generación en curso (misma foto) se une a ella y **nunca** crea otra, y una retoma automática del cliente (`X-Generation-Resume: true`) sin nada que retomar falla con `502` |
 | RN-14 | **Limitación aceptada:** la cuota vive en memoria; un reinicio o apagado del servicio la reinicia. El tope real de gasto es el **saldo de créditos** (25 gratuitos, sin compras): al agotarse, Stability rechaza la llamada y el backend responde `503 SERVICE_UNAVAILABLE` (A9) |
 | RN-15 | Las pruebas automáticas **no hacen llamadas reales** al proveedor: usan WireMock o un generador simulado. Cada generación real gasta 40 créditos y se planifica (primera prueba, demo) |
 | RN-16 | Solo se envían al proveedor fotos que contengan un **vehículo**. El proveedor no lo verifica: modela el objeto principal de cualquier foto y cobra la generación. La verificación la hace el **cliente** con un clasificador de imágenes local antes de enviar (ver el repositorio del frontend). **Limitación aceptada:** el backend no la repite, por la RAM de Render (512 MB) y porque el único cliente es la app oficial; un cliente alterado podría saltarla, y el gasto queda acotado por la cuota (RN-02, RN-10, RN-11) |
@@ -456,10 +458,13 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
 ### 13.9 Comunicación con Tripo
 - **Clientes:** `RestClient` sobre HTTP/1.1 con la URL base de la v3 y la clave en `Authorization`. La descarga del GLB usa otro `RestClient` **sin** la clave, porque `model_url` apunta a otro host (CDN).
 - **Saldo primero (RF-BE-020):** antes de subir la foto se consulta `GET /v3/account/balance`; con menos de `min-balance` (40) se responde 503 sin crear nada.
-- **Asíncrono a síncrono:** el endpoint `POST /api/v1/generations` sigue siendo síncrono. El adaptador consulta la tarea cada `poll-interval` (2 s). `max-wait` (85 s) es un **plazo duro de toda la generación**, del saldo a la descarga: corre en un hilo virtual que se cancela al vencer, así ninguna llamada lenta (con `read-timeout` de 30 s) alarga la espera más allá de los ~100 s del proxy de Render (Cloudflare) ni de los 120 s del cliente. Si Tripo tarda más, las opciones son un modelo más rápido (`TUNAI_TRIPO_MODEL`) o un contrato asíncrono con el cliente (P-BE-10).
+- **Asíncrono a síncrono, con retoma (RF-BE-025):** el endpoint `POST /api/v1/generations` sigue siendo síncrono, pero una petición ya no equivale a una generación. La generación corre en su propio hilo virtual, con plazo `task-deadline` (10 min) del saldo a la descarga, y queda registrada en memoria por el SHA-256 de la foto; consulta la tarea cada `poll-interval` (2 s). Cada petición la espera como máximo `max-wait` (85 s), para responder antes de los ~100 s del proxy de Render (Cloudflare) y de los 120 s del cliente. **Latencia medida** (9-nov-2026, parámetros por defecto): entre 2 y 4 minutos; a los 85 s las tareas iban en 37–69 %. Lo normal, entonces, es que la primera petición no alcance el modelo.
+- **Timeout retomable:** al vencer `max-wait` la generación **no se cancela**, porque Tripo la termina y la cobra igual. Se responde `504 PROVIDER_TIMEOUT` con `"resumable": true` y `Retry-After: 3`. Otra petición con la misma foto se une a la generación en curso o recoge el modelo ya terminado (se conserva 15 min; como máximo 2 a la vez, por memoria). Retomar solo reserva los créditos de la cuenta: no cuenta otro uso diario de IP ni global. Vale también para el `Reintentar` manual de un cliente que no conoce el contrato (app 1.0.1).
+- **La retoma automática nunca crea (RN-13):** el cliente marca las retomas que hace por su cuenta con el header `X-Generation-Resume: true`. Con él, si no hay generación que retomar (el servicio se reinició o la generación falló) se responde `502 PROVIDER_ERROR` sin reservar cuota ni llamar a Tripo. Solo una petición sin el header, que el usuario confirmó, puede crear una tarea.
+- **Limitación aceptada: reinicio a mitad de una generación.** El registro vive en memoria. Si Render reinicia la instancia con una tarea en curso, Tripo la termina y la cobra, y el modelo solo se recupera en el panel de Tripo con el `task_id` del log. Evitarlo exige guardar el `task_id` fuera de la memoria (P-BE-10).
 - **Sin reintentos de la creación (RN-13):** la tarea se crea una sola vez. Sí se reintentan los GET idempotentes: la consulta de la tarea ante fallos de red, 5xx o respuestas no-JSON (hasta 5 seguidos) y la descarga del GLB (1 reintento), porque abandonar una tarea no evita que Tripo la cobre.
-- **Fallos después de crear la tarea:** Tripo solo cobra las tareas que terminan en `success`; devuelve los créditos de `failed` y `cancelled`, y `banned` no se genera. Cualquier otro fallo posterior a la creación (tiempo agotado, consulta o descarga fallida, URL ausente, GLB inválido o demasiado grande, estado `expired`) puede haberse cobrado: la excepción lo marca (`providerMayHaveCharged`) y la cuota lo cuenta en los límites diarios de IP y global, aunque al usuario se le devuelven sus créditos. El `task_id` queda en el log (WARN).
-- **Limitación aceptada: desconexión del cliente.** Si la app se cierra o pierde la conexión a mitad de una generación, el backend no se entera hasta escribir la respuesta: la tarea sigue, Tripo la cobra, la cuota se confirma y el GLB se pierde. Cancelarla exigiría detectar el cierre del socket durante la espera, que Servlet no ofrece de forma confiable detrás del proxy; el costo queda acotado por la cuota diaria y el saldo (RF-BE-020).
+- **Fallos después de crear la tarea:** Tripo solo cobra las tareas que terminan en `success`; devuelve los créditos de `failed` y `cancelled`, y `banned` no se genera. Cualquier otro fallo posterior a la creación (tiempo agotado, consulta o descarga fallida, URL ausente, GLB inválido o demasiado grande, estado `expired`) puede haberse cobrado: la excepción lo marca (`providerMayHaveCharged`) y la cuota lo cuenta en los límites diarios de IP y global, aunque al usuario se le devuelven sus créditos. El `task_id` queda en el log (WARN), también cuando el fallo ocurre en segundo plano sin ninguna petición esperando.
+- **Limitación aceptada: desconexión del cliente.** Si la app se cierra o pierde la conexión mientras espera, la generación sigue en segundo plano y el modelo queda 15 min a disposición de la misma foto. Si la conexión se corta cuando ya se está escribiendo el GLB en la respuesta, el backend no se entera a tiempo: la cuota ya se confirmó, el modelo ya salió del registro y se pierde. El costo queda acotado por la cuota diaria y el saldo (RF-BE-020).
 - **Parámetros fijos** (`TripoOptions`): `model` (`v3.1-20260211`), `face_limit` (200.000, para acotar el GLB y lo que dibuja el visor), `texture_quality` (`detailed`, 4K, +10 créditos), `geometry_quality` (`standard`; `detailed` = malla ultra, +20) y `pbr` (`true`). Total: 40 créditos por modelo, que el log confirma con `credits_consumed`. No se envían `quad` (fuerza FBX) ni `compress` (meshopt, que el visor no soporta).
 - **Respuesta:** se exige `code == 0` y `data`; el GLB se lee como máximo `max-model-bytes + 1` y se valida su magic (RF-BE-013).
 - **Mapeo de errores** (`TripoErrorTranslator`), primero por `code` y después por estado HTTP:
@@ -468,7 +473,7 @@ public GeneratedModelResult generate(GenerateCommand cmd) {
   - 1007, 2000 y 429 (tasa o concurrencia) → `ProviderUnavailableException` con `Retry-After`;
   - 413 y 422 sin código conocido → `ProviderRejectedException`;
   - 2002 (parámetro no soportado: configuración nuestra), 5xx, respuestas que no son JSON, tareas `failed`, `expired` o `cancelled`, `success` sin `model_url` → `ProviderFailureException` (502);
-  - timeouts de red o de `max-wait` → `ProviderTimeoutException` (504).
+  - timeouts de red, de `max-wait` (retomable) o de `task-deadline` (la tarea se abandona) → `ProviderTimeoutException` (504).
 
 ### 13.8 Cuota y gasto de créditos
 - Desde v1.10 no hay proveedor `fake`: **cualquier generación exitosa gasta créditos de Tripo**, también en local. La cuota es el único freno del gasto en Render; las pruebas automáticas usan WireMock o un generador simulado.
@@ -542,7 +547,7 @@ curl -X POST https://tunai-api-qd5x.onrender.com/api/v1/generations \
 ```
 
 ### 15.3 Ejemplo de cliente (referencia para el frontend)
-Ver `PRD-TunAI-Frontend.md` §15 (repositorio del frontend). Cliente: `java.net.http.HttpClient` con timeout total de 120 s, sin reintentos automáticos en `POST`.
+Ver `PRD-TunAI-Frontend.md` §15 (repositorio del frontend). Cliente: `java.net.http.HttpClient` con 120 s para recibir la respuesta y 300 s en total con la descarga del GLB. El `POST` no se reintenta solo, con una excepción: un `504` con `"resumable": true` se retoma repitiendo la petición con la misma foto y el header `X-Generation-Resume: true`.
 
 ### 15.4 Catálogo de errores
 
@@ -556,15 +561,17 @@ Ver `PRD-TunAI-Frontend.md` §15 (repositorio del frontend). Cliente: `java.net.
 | 422 | `PROVIDER_REJECTED` | El proveedor rechazó la imagen | No |
 | 402 | `INSUFFICIENT_CREDITS` | La instalación no tiene créditos para otro modelo (sin `Retry-After`) | — |
 | 429 | `QUOTA_EXCEEDED` | Cuota diaria por IP agotada (+ `Retry-After`) | — |
-| 502 | `PROVIDER_ERROR` | Error 5xx del proveedor o respuesta no-GLB | No |
+| 502 | `PROVIDER_ERROR` | Error 5xx del proveedor o respuesta no-GLB. También una retoma (`X-Generation-Resume: true`) sin generación en curso | No |
 | 503 | `SERVICE_BUSY` | Sin cupo de concurrencia (+ `Retry-After`) | No |
 | 503 | `SERVICE_UNAVAILABLE` | Límite global, proveedor sin créditos o con clave inválida | No |
-| 504 | `PROVIDER_TIMEOUT` | Tiempo agotado con el proveedor | No |
+| 504 | `PROVIDER_TIMEOUT` | Tiempo agotado con el proveedor. Con `"resumable": true` (+ `Retry-After`) la generación sigue en el servidor: repetir la petición con la misma foto la retoma sin crear otra tarea. Sin ese campo no hay nada que retomar | No |
 | 404 | `NOT_FOUND` | La ruta no existe | No |
 | 405 | `METHOD_NOT_ALLOWED` | Método HTTP no permitido en la ruta (+ header `Allow`) | No |
 | 500 | `INTERNAL_ERROR` | Error inesperado (sin detalles internos) | No |
 
 > El cliente tiene además códigos propios que el backend nunca envía (`NOT_A_VEHICLE`, `CLIENT_TIMEOUT`, etc.); ver el repositorio del frontend.
+
+**Retoma de un `504` (RF-BE-025).** El campo `resumable` solo aparece, con valor `true`, en el `504 PROVIDER_TIMEOUT` cuya generación sigue en curso. Un cliente que retoma por su cuenta, sin preguntar al usuario, **debe** enviar el header de petición `X-Generation-Resume: true` en `POST /api/v1/generations`: así el servidor solo puede unirse a esa generación y, si ya no existe, responde `502 PROVIDER_ERROR` en vez de crear (y cobrar) otra. Cualquier otro valor del header, o su ausencia, es una generación normal confirmada por el usuario; si la foto tiene una generación en curso también se une a ella. Es un cambio compatible: un cliente que ignore `resumable` ve el mismo `504` de siempre.
 
 ### 15.5 Versionado del contrato
 - Ambos repositorios referencian esta sección como contrato oficial.
@@ -653,7 +660,7 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 | R-BE-11 | Gasto accidental de créditos durante el desarrollo | Media | Alto | Proveedor por defecto `fake` (RF-BE-021); tests con WireMock; la clave solo se configura donde se necesita |
 | R-BE-12 | Se envía una foto que no es de un vehículo, o una foto mala de un carro (cortado, de detalle, con varios carros): SF3D genera un modelo inútil y cobra la generación | Media | Alto | Clasificador de vehículos en el cliente (RN-16); consejos de foto en la UI; confirmación antes de generar; en la demo, usar una foto ya probada |
 | R-BE-13 | El GLB de Tripo no pasa el visor (varias mallas o primitivas, extensiones obligatorias, texturas en otro formato) | Media | Alto | La primera generación pagada es una prueba de formato; se guarda el GLB y se ajusta el visor o los parámetros (`pbr`, `face_limit`) antes del ensayo general. Stability queda como respaldo |
-| R-BE-14 | Tripo tarda más que el proxy (~100 s) o que el cliente (120 s) | Media | Alto | `max-wait` en 85 s; se mide en la primera prueba; un modelo más rápido por variable; contrato asíncrono como último recurso (P-BE-10) |
+| R-BE-14 | Tripo tarda más que el proxy (~100 s) o que el cliente (120 s) | Alta (ocurrió el 9-nov-2026: 2–4 min) | Alto | Timeout retomable (§13.9): la generación sigue en segundo plano hasta `task-deadline` y la misma foto la retoma sin crear otra tarea; `max-wait` se queda en 85 s. Riesgo residual: un reinicio del servicio a mitad de la generación (P-BE-10) |
 
 ---
 
@@ -699,7 +706,7 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 | P-BE-07 | Cobertura mínima de pruebas | Resuelta: 70 % en dominio y aplicación |
 | P-BE-08 | ¿Proveedor gratuito alternativo (Google, Hugging Face, ejecución local)? | Resuelta: no. Google no ofrece una API de imagen a 3D; se usan los créditos gratuitos de Stability (2 generaciones) |
 | P-BE-09 | ¿Se mantiene Lombok? El dominio y la aplicación deben ser Java puro y los `record` cubren los objetos de valor | PENDIENTE DE DEFINIR (por ahora no se usa en el código) |
-| P-BE-10 | Si Tripo suele tardar más de ~85 s, ¿se pasa a un contrato asíncrono (`202` + consulta) con cambios en el cliente? | PENDIENTE: se decide con la latencia medida en la primera prueba pagada |
+| P-BE-10 | Si Tripo suele tardar más de ~85 s, ¿se pasa a un contrato asíncrono (`202` + consulta) con cambios en el cliente? | **RESUELTA en v1.13** sin cambiar el contrato: Tripo tarda 2–4 min y se adoptó el timeout retomable (§13.9, RF-BE-025). El contrato asíncrono, con el `task_id` guardado fuera de la memoria, solo haría falta para sobrevivir a un reinicio a mitad de una generación; queda como mejora |
 
 ---
 
@@ -750,7 +757,8 @@ Valores objetivo **PENDIENTE DE DEFINIR**, salvo los indicados en los RNF.
 | `TUNAI_TRIPO_CONNECT_TIMEOUT` | `tunai.tripo.connect-timeout` | `10s` | No |
 | `TUNAI_TRIPO_READ_TIMEOUT` | `tunai.tripo.read-timeout` | `30s` | No (por petición) |
 | `TUNAI_TRIPO_POLL_INTERVAL` | `tunai.tripo.poll-interval` | `2s` | No |
-| `TUNAI_TRIPO_MAX_WAIT` | `tunai.tripo.max-wait` | `85s` | No (plazo de toda la generación; debe caber en los ~100 s del proxy) |
+| `TUNAI_TRIPO_MAX_WAIT` | `tunai.tripo.max-wait` | `85s` | No (espera de cada petición antes del `504` retomable; debe caber en los ~100 s del proxy. No se sube para "darle tiempo" a Tripo) |
+| `TUNAI_TRIPO_TASK_DEADLINE` | `tunai.tripo.task-deadline` | `10m` | No (plazo de toda la generación en segundo plano, del saldo a la descarga) |
 | `TUNAI_CREDITS_INITIAL` | `tunai.quota.initial-credits` | `45` | No |
 | `TUNAI_CREDITS_PER_MODEL` | `tunai.quota.credits-per-model` | `15` | No |
 | `TUNAI_QUOTA_PER_IP` | `tunai.quota.per-ip` | `2` | No |
@@ -812,12 +820,13 @@ ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 **Tripo (único proveedor desde v1.10; 40 créditos por generación):**
 1. Confirmar el saldo en el panel de Tripo (≥ 40 créditos por generación planificada).
 2. En Render → *Environment*: `TRIPO_API_KEY` configurada a mano con **Save only**, y las cuotas en 2 (`TUNAI_QUOTA_PER_IP`, `TUNAI_QUOTA_GLOBAL_DAILY`).
-3. Confirmar en el log de arranque la línea WARN `Generador TRIPO` con modelo, caras, textura `DETAILED`, geometría `STANDARD` y espera máxima.
+3. Confirmar en el log de arranque la línea WARN `Generador TRIPO` con modelo, caras, textura `DETAILED`, geometría `STANDARD`, espera por petición (`PT1M25S`) y plazo total (`PT10M`). Si las caras, la textura o el PBR no son los esperados, hay una variable `TUNAI_TRIPO_*` sobrescrita en Render.
 4. **Primera prueba:**
-   - generar desde la app con una foto ya probada;
-   - en el log (`Tarea de Tripo … lista`), revisar la latencia, el tamaño del GLB y `credits_consumed` (esperado: 40);
+   - generar desde la app con una foto ya probada y **no tocar `Reintentar`**: la app retoma sola mientras Tripo termina (2–4 min);
+   - en el log debe haber **una sola** `Tarea de Tripo creada`, después `la generación sigue en segundo plano`, `Se retoma la generación…` y `Tarea de Tripo … lista`; revisar ahí la latencia, el tamaño del GLB y `credits_consumed` (esperado: 40);
+   - en el panel de Tripo, una sola tarea cobrada;
    - guardar el GLB y revisar el visor, el recoloreado y la exportación.
-5. Si el GLB no pasa el visor, pesa demasiado o la latencia supera los ~85 s, ajustar antes de la demo (`TUNAI_TRIPO_FACE_LIMIT`, `TUNAI_TRIPO_TEXTURE_QUALITY`; R-BE-13, R-BE-14).
+5. Si el GLB no pasa el visor o pesa demasiado, ajustar antes de la demo (`TUNAI_TRIPO_FACE_LIMIT`, `TUNAI_TRIPO_TEXTURE_QUALITY`; R-BE-13). Una latencia mayor de 85 s es normal; solo si se acerca a `task-deadline` (10 min) hay que subirlo o elegir un modelo más rápido (R-BE-14).
 
 **Demo (40 créditos):**
 1. Confirmar que queda saldo para 1 generación.

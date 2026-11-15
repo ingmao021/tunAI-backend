@@ -14,15 +14,21 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,11 +61,20 @@ import tools.jackson.databind.node.ObjectNode;
  *   <li>Descarga el GLB de {@code output.model_url} (CDN de Tripo, <b>sin</b> la clave), con un reintento.
  * </ol>
  *
- * <p>Todo el flujo tiene un plazo duro de {@code maxWait}: corre en un hilo virtual que se cancela al vencer, así una
- * llamada lenta no deja al cliente esperando más que el proxy de Render. Nunca se reintenta la creación de la tarea
- * (RN-13). Si algo falla después de enviar la creación (creación sin respuesta clara, tiempo agotado, consulta o
- * descarga fallida, GLB inválido), Tripo puede cobrarla igual: la excepción lo indica con
- * {@link DomainException#providerMayHaveCharged()} y el {@code task_id}, si se conoce, queda en el log.
+ * <p>El cliente espera como máximo {@code maxWait} (debe caber en el proxy de Render), pero la generación <b>no se
+ * cancela</b> al vencer: Tripo la termina y la cobra igual, así que abandonarla solo desperdicia el modelo. Corre en un
+ * hilo virtual propio, con plazo {@code taskDeadline}, y queda registrada por el hash de la foto. Un reintento con la
+ * misma foto se une a ella (o recoge el modelo ya terminado) en vez de crear otra tarea, y por tanto no vuelve a gastar
+ * créditos. Un modelo sin recoger se descarta tras {@link #RESULT_TTL}.
+ *
+ * <p>{@link #generate} empieza una generación o se une a la que haya; {@link #resume} solo se une y, si no hay ninguna
+ * (el servicio se reinició o la generación falló), falla sin crear nada. El registro vive en memoria: no sobrevive a
+ * un reinicio.
+ *
+ * <p>Nunca se reintenta la creación de la tarea (RN-13). Si algo falla después de enviar la creación (creación sin
+ * respuesta clara, tiempo agotado, consulta o descarga fallida, GLB inválido), Tripo puede cobrarla igual: la
+ * excepción lo indica con {@link DomainException#providerMayHaveCharged()} y el {@code task_id}, si se conoce, queda
+ * en el log.
  */
 public final class TripoAdapter implements ModelGeneratorPort {
 
@@ -74,6 +89,18 @@ public final class TripoAdapter implements ModelGeneratorPort {
     /** Intentos de descarga del GLB: la URL es de solo lectura, así que repetirla no cobra otra vez. */
     static final int DOWNLOAD_ATTEMPTS = 2;
 
+    /** Plazo por defecto de la generación en segundo plano; Tripo tarda minutos, no horas. */
+    static final Duration DEFAULT_TASK_DEADLINE = Duration.ofMinutes(10);
+
+    /** Cuánto se conserva un modelo terminado que el cliente no llegó a recoger. */
+    static final Duration RESULT_TTL = Duration.ofMinutes(15);
+
+    /**
+     * Modelos terminados y sin recoger que se conservan a la vez. Cada uno ocupa hasta {@code maxModelBytes} (50 MB) y
+     * la instancia de Render tiene 512 MB.
+     */
+    static final int MAX_KEPT_RESULTS = 2;
+
     private static final Logger log = LoggerFactory.getLogger(TripoAdapter.class);
 
     /** Bytes de las respuestas JSON que se leen; las de Tripo ocupan unos cientos. */
@@ -87,7 +114,9 @@ public final class TripoAdapter implements ModelGeneratorPort {
     private final int minBalance;
     private final Duration pollInterval;
     private final Duration maxWait;
+    private final Duration taskDeadline;
     private final long maxModelBytes;
+    private final ConcurrentMap<String, Generation> generations = new ConcurrentHashMap<>();
     private final JsonMapper json = JsonMapper.builder().build();
     private final TripoErrorTranslator translator = new TripoErrorTranslator();
 
@@ -95,7 +124,10 @@ public final class TripoAdapter implements ModelGeneratorPort {
      * @param api cliente con la URL base de la v3, el header {@code Authorization} y timeouts
      * @param download cliente para la URL del GLB; no debe llevar la clave (es otro host)
      * @param minBalance créditos disponibles mínimos para empezar una generación (lo que cuesta un modelo)
-     * @param maxWait plazo de toda la generación, del saldo a la descarga; debe caber en los ~100 s del proxy (§13.9)
+     * @param maxWait lo que espera cada petición antes de responder que la generación sigue; debe caber en los ~100 s
+     *     del proxy (§13.9)
+     * @param taskDeadline plazo de toda la generación, del saldo a la descarga; corre en segundo plano y sigue
+     *     aunque el cliente deje de esperar
      * @param maxModelBytes tamaño máximo del GLB; se corta la lectura al superarlo (RF-BE-013)
      */
     public TripoAdapter(
@@ -105,6 +137,7 @@ public final class TripoAdapter implements ModelGeneratorPort {
             int minBalance,
             Duration pollInterval,
             Duration maxWait,
+            Duration taskDeadline,
             long maxModelBytes) {
         this.api = Objects.requireNonNull(api, "api");
         this.download = Objects.requireNonNull(download, "download");
@@ -115,10 +148,35 @@ public final class TripoAdapter implements ModelGeneratorPort {
         this.minBalance = minBalance;
         this.pollInterval = requirePositive(pollInterval, "pollInterval");
         this.maxWait = requirePositive(maxWait, "maxWait");
+        this.taskDeadline = requirePositive(taskDeadline, "taskDeadline");
         if (maxModelBytes <= 0 || maxModelBytes > Integer.MAX_VALUE - 8) {
             throw new IllegalArgumentException("maxModelBytes fuera de rango: " + maxModelBytes);
         }
         this.maxModelBytes = maxModelBytes;
+    }
+
+    /** Como {@link #create} con el plazo de segundo plano por defecto. */
+    public static TripoAdapter create(
+            URI baseUrl,
+            String apiKey,
+            Duration connectTimeout,
+            Duration readTimeout,
+            TripoOptions options,
+            int minBalance,
+            Duration pollInterval,
+            Duration maxWait,
+            long maxModelBytes) {
+        return create(
+                baseUrl,
+                apiKey,
+                connectTimeout,
+                readTimeout,
+                options,
+                minBalance,
+                pollInterval,
+                maxWait,
+                DEFAULT_TASK_DEADLINE,
+                maxModelBytes);
     }
 
     /** Crea el adaptador con un cliente HTTP del JDK (RNF-BE-002) y la clave solo en las llamadas a la API. */
@@ -131,6 +189,7 @@ public final class TripoAdapter implements ModelGeneratorPort {
             int minBalance,
             Duration pollInterval,
             Duration maxWait,
+            Duration taskDeadline,
             long maxModelBytes) {
         Objects.requireNonNull(baseUrl, "baseUrl");
         if (apiKey == null || apiKey.isBlank()) {
@@ -152,48 +211,163 @@ public final class TripoAdapter implements ModelGeneratorPort {
                 .build();
         RestClient download =
                 RestClient.builder().requestFactory(requestFactory).build();
-        return new TripoAdapter(api, download, options, minBalance, pollInterval, maxWait, maxModelBytes);
+        return new TripoAdapter(api, download, options, minBalance, pollInterval, maxWait, taskDeadline, maxModelBytes);
     }
 
     @Override
     public GeneratedModel generate(VehicleImage image) {
         Objects.requireNonNull(image, "image");
-        long deadline = System.nanoTime() + maxWait.toNanos();
-        AtomicBoolean creationSent = new AtomicBoolean();
-        AtomicReference<String> createdTask = new AtomicReference<>();
+        String key = fingerprint(image);
+        evictStale();
+        Generation fresh = new Generation();
+        Generation generation = generations.putIfAbsent(key, fresh);
+        if (generation == null) {
+            generation = fresh;
+            start(key, image, generation);
+        } else {
+            logResumed(generation);
+        }
+        return await(key, generation);
+    }
+
+    @Override
+    public GeneratedModel resume(VehicleImage image) {
+        Objects.requireNonNull(image, "image");
+        String key = fingerprint(image);
+        evictStale();
+        Generation generation = generations.get(key);
+        if (generation == null) {
+            // Se perdió con un reinicio o falló: la anterior pudo cobrarse y aquí no se crea otra (RN-13)
+            throw new ProviderFailureException(
+                    "No hay ninguna generación de Tripo en curso para esta foto: no se crea otra al retomar",
+                    null,
+                    true);
+        }
+        logResumed(generation);
+        return await(key, generation);
+    }
+
+    @Override
+    public boolean hasPendingGeneration(VehicleImage image) {
+        Objects.requireNonNull(image, "image");
+        evictStale();
+        return generations.containsKey(fingerprint(image));
+    }
+
+    /** Espera el modelo como máximo {@code maxWait}; si no llega, la generación sigue y se puede retomar. */
+    private GeneratedModel await(String key, Generation generation) {
+        generation.waiters.incrementAndGet();
+        try {
+            GeneratedModel model = generation.result.get(maxWait.toNanos(), TimeUnit.NANOSECONDS);
+            generations.remove(key, generation);
+            return model;
+        } catch (TimeoutException e) {
+            throw stillRunning(generation);
+        } catch (ExecutionException e) {
+            throw unwrap(e.getCause());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ProviderFailureException(
+                    "Espera de la generación con Tripo interrumpida", e, generation.creationSent.get());
+        } finally {
+            generation.waiters.decrementAndGet();
+        }
+    }
+
+    private static void logResumed(Generation generation) {
+        String taskId = generation.taskId.get();
+        log.info(
+                "Se retoma la generación de Tripo de esta foto (tarea {}) en vez de crear otra",
+                taskId != null ? taskId : "aún sin crear");
+    }
+
+    /** Lanza la generación en su propio hilo virtual: no depende de que el cliente siga esperando. */
+    private void start(String key, VehicleImage image, Generation generation) {
+        long deadline = System.nanoTime() + taskDeadline.toNanos();
         Map<String, String> mdc = MDC.getCopyOfContextMap();
-        FutureTask<GeneratedModel> work = new FutureTask<>(() -> {
+        generation.worker = Thread.ofVirtual().name("tripo-generation").start(() -> {
             if (mdc != null) {
                 MDC.setContextMap(mdc);
             }
             try {
-                return run(image, deadline, creationSent, createdTask);
+                GeneratedModel model = run(image, deadline, generation.creationSent, generation.taskId);
+                generation.finishedAt = System.nanoTime();
+                generation.result.complete(model);
+            } catch (Throwable t) {
+                // Una generación fallida no se retoma: el siguiente intento debe crear una tarea nueva
+                generations.remove(key, generation);
+                generation.finishedAt = System.nanoTime();
+                if (generation.waiters.get() == 0) {
+                    // Nadie espera la respuesta: sin esta línea el fallo (y el task_id) no quedaría en ningún lado
+                    String taskId = generation.taskId.get();
+                    log.warn(
+                            "La generación de Tripo en segundo plano falló (tarea {}): {}",
+                            taskId != null ? taskId : "sin crear",
+                            t.toString());
+                }
+                generation.result.completeExceptionally(t);
             } finally {
                 MDC.clear();
             }
         });
-        Thread.ofVirtual().name("tripo-generation").start(work);
-        try {
-            return work.get(maxWait.toNanos(), TimeUnit.NANOSECONDS);
-        } catch (TimeoutException e) {
-            work.cancel(true);
-            String taskId = createdTask.get();
-            if (taskId != null) {
-                log.warn("Tarea de Tripo {} sin terminar tras {}: puede completarse y cobrarse", taskId, maxWait);
-            } else if (creationSent.get()) {
-                log.warn("Plazo de {} vencido mientras se creaba la tarea de Tripo: puede existir y cobrarse", maxWait);
-            }
-            throw new ProviderTimeoutException(
-                    "Tripo no terminó en " + maxWait + (taskId != null ? " (tarea " + taskId + ")" : ""),
-                    null,
-                    creationSent.get());
-        } catch (ExecutionException e) {
-            throw unwrap(e.getCause());
-        } catch (InterruptedException e) {
-            work.cancel(true);
-            Thread.currentThread().interrupt();
-            throw new ProviderFailureException("Generación con Tripo interrumpida", e, creationSent.get());
+    }
+
+    /** El cliente dejó de esperar, pero la generación sigue: Tripo puede terminarla y cobrarla. */
+    private ProviderTimeoutException stillRunning(Generation generation) {
+        String taskId = generation.taskId.get();
+        log.warn(
+                "Tripo no terminó en {} (tarea {}): la generación sigue en segundo plano y un reintento con la misma"
+                        + " foto la retoma",
+                maxWait,
+                taskId != null ? taskId : "aún sin crear");
+        return new ProviderTimeoutException(
+                "Tripo no terminó en " + maxWait + (taskId != null ? " (tarea " + taskId + ")" : ""), null, true, true);
+    }
+
+    /** Descarta modelos sin recoger caducados y, si hay demasiados, los más antiguos. */
+    private void evictStale() {
+        long now = System.nanoTime();
+        generations.entrySet().removeIf(e -> {
+            Generation g = e.getValue();
+            return g.result.isDone() && now - g.finishedAt > RESULT_TTL.toNanos();
+        });
+        long finished =
+                generations.values().stream().filter(g -> g.result.isDone()).count();
+        while (finished-- > MAX_KEPT_RESULTS) {
+            generations.entrySet().stream()
+                    .filter(e -> e.getValue().result.isDone())
+                    .min((a, b) -> Long.compare(a.getValue().finishedAt, b.getValue().finishedAt))
+                    .ifPresent(e -> generations.remove(e.getKey(), e.getValue()));
         }
+    }
+
+    /** Interrumpe las generaciones en curso y olvida las guardadas; para apagar el servicio y para los tests. */
+    void cancelAll() {
+        generations.values().forEach(g -> {
+            Thread worker = g.worker;
+            if (worker != null) {
+                worker.interrupt();
+            }
+        });
+        generations.clear();
+    }
+
+    private static String fingerprint(VehicleImage image) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(image.data()));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 no disponible", e);
+        }
+    }
+
+    /** Generación en curso o terminada y sin recoger, compartida por el intento original y sus reintentos. */
+    private static final class Generation {
+        final CompletableFuture<GeneratedModel> result = new CompletableFuture<>();
+        final AtomicBoolean creationSent = new AtomicBoolean();
+        final AtomicReference<String> taskId = new AtomicReference<>();
+        final AtomicInteger waiters = new AtomicInteger();
+        volatile long finishedAt;
+        volatile Thread worker;
     }
 
     private GeneratedModel run(
@@ -359,8 +533,8 @@ public final class TripoAdapter implements ModelGeneratorPort {
     private void waitForNextPoll(String taskId, long deadline, String status, int progress) {
         if (System.nanoTime() + pollInterval.toNanos() > deadline) {
             log.warn(
-                    "Tarea de Tripo {} sin terminar tras {} ({}, {}%): puede completarse y cobrar créditos",
-                    taskId, maxWait, status, progress);
+                    "Tarea de Tripo {} sin terminar tras {} ({}, {}%): se abandona; puede completarse y cobrarse",
+                    taskId, taskDeadline, status, progress);
             throw new ProviderTimeoutException("La tarea " + taskId + " de Tripo no terminó a tiempo", null, true);
         }
         sleep(pollInterval);
