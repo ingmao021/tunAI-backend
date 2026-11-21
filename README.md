@@ -63,10 +63,11 @@ Todo por variables de entorno (defaults en [`application.yaml`](src/main/resourc
 |---|---|---|
 | `TRIPO_API_KEY` | — (obligatoria) | Clave de Tripo |
 | `PORT` | `8080` | Puerto HTTP |
+| `TUNAI_CREDITS_INITIAL` / `TUNAI_CREDITS_PER_MODEL` | `45` / `15` | Créditos por `X-Installation-Id` (3 modelos) / costo de cada modelo |
 | `TUNAI_QUOTA_PER_IP` / `TUNAI_QUOTA_GLOBAL_DAILY` | `2` / `2` | Generaciones por día por IP / en total |
 | `TUNAI_MAX_CONCURRENT` | `2` | Generaciones simultáneas |
 
-Los límites son los de la demo: para desarrollar súbelos (`TUNAI_QUOTA_PER_IP=50 TUNAI_QUOTA_GLOBAL_DAILY=50`). La cuota vive en memoria y se reinicia con el servicio.
+Los límites son los de la demo: la 4.ª generación con el mismo UUID responde `402 INSUFFICIENT_CREDITS` y, pasado el tope diario, `429 QUOTA_EXCEEDED`. Para desarrollar súbelos (`TUNAI_CREDITS_INITIAL=450 TUNAI_QUOTA_PER_IP=50 TUNAI_QUOTA_GLOBAL_DAILY=50`) o usa otro UUID. La cuota vive en memoria y se reinicia con el servicio.
 
 ## Pruebas y Docker
 
